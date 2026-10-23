@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>직원관리 · 사내 인트라넷</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</head>
+<body>
+<main class="container">
+  <div class="page-title">직원관리</div>
+  <p class="muted" style="margin-bottom:16px">여기 등록한 이메일만 로그인할 수 있습니다. 등록 후 인트라넷 주소를 카톡으로 보내주면 직원이 이메일 코드로 로그인합니다.</p>
+
+  <form class="card" id="inviteForm">
+    <h2>➕ 직원 등록</h2>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:0 12px">
+      <div><label for="iEmail">이메일</label><input type="email" id="iEmail" required></div>
+      <div><label for="iName">이름</label><input type="text" id="iName" required maxlength="40"></div>
+      <div><label for="iDept">부서 (선택)</label><input type="text" id="iDept" maxlength="40"></div>
+      <div><label for="iRole">권한</label>
+        <select id="iRole"><option value="member">일반</option><option value="admin">관리자</option></select></div>
+    </div>
+    <div class="btn-row"><button class="btn" type="submit">등록</button></div>
+  </form>
+
+  <div class="card">
+    <h2>👥 가입한 직원 <span class="count" id="memberCount"></span></h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>이름</th><th>부서</th><th>이메일</th><th>권한</th><th>사용</th><th></th></tr></thead>
+        <tbody id="members"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>✉️ 등록됐지만 아직 로그인 안 한 직원</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>이름</th><th>부서</th><th>이메일</th><th>권한</th><th></th></tr></thead>
+        <tbody id="pending"></tbody>
+      </table>
+    </div>
+    <div class="btn-row"><button class="btn ghost sm" id="copyInvite">초대 안내 문구 복사</button></div>
+  </div>
+</main>
+<script>
+(async () => {
+  const { sb, esc, toast, errMsg, copyText } = App;
+  const me = await App.requireAuth();
+  if (me.role !== 'admin') {
+    document.querySelector('main').innerHTML = '<div class="card"><h2>관리자만 볼 수 있습니다</h2></div>';
+    return;
+  }
+
+  async function load() {
+    const [p, a] = await Promise.all([
+      sb.from('profiles').select('*').order('active', { ascending: false }).order('name'),
+      sb.from('allowed_emails').select('*').order('created_at', { ascending: false }),
+    ]);
+    if (p.error || a.error) return toast(errMsg(p.error || a.error), true);
+    const joined = new Set(p.data.map(x => x.email));
+
+    document.getElementById('memberCount').textContent = `${p.data.filter(x => x.active).length}명`;
+    document.getElementById('members').innerHTML = p.data.map(x => `
+      <tr data-id="${x.id}">
+        <td><input type="text" name="name" value="${esc(x.name)}"></td>
+        <td><input type="text" name="dept" value="${esc(x.dept || '')}"></td>
+        <td class="muted">${esc(x.email)}</td>
+        <td><select name="role"><option value="member" ${x.role === 'member' ? 'selected' : ''}>일반</option><option value="admin" ${x.role === 'admin' ? 'selected' : ''}>관리자</option></select></td>
+        <td><input type="checkbox" name="active" ${x.active ? 'checked' : ''} title="해제하면 로그인해도 아무것도 볼 수 없습니다 (퇴사자)"></td>
+        <td><button class="btn ghost sm" data-act="save">저장</button></td>
+      </tr>`).join('');
+
+    const pend = a.data.filter(x => !joined.has(x.email));
+    document.getElementById('pending').innerHTML = pend.length ? pend.map(x => `
+      <tr><td>${esc(x.name)}</td><td>${esc(x.dept || '')}</td><td>${esc(x.email)}</td>
+        <td>${x.role === 'admin' ? '관리자' : '일반'}</td>
+        <td><button class="btn ghost sm" data-act="uninvite" data-email="${esc(x.email)}">취소</button></td></tr>`).join('')
+      : '<tr><td colspan="5" class="muted">없음</td></tr>';
+  }
+
+  document.getElementById('inviteForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const row = {
+      email: document.getElementById('iEmail').value.trim().toLowerCase(),
+      name: document.getElementById('iName').value.trim(),
+      dept: document.getElementById('iDept').value.trim() || null,
+      role: document.getElementById('iRole').value,
+    };
+    const { error } = await sb.from('allowed_emails').upsert(row);
+    if (error) return toast(errMsg(error), true);
+    e.target.reset();
+    toast(`${row.name} 님을 등록했습니다.`);
+    load();
+  };
+
+  document.querySelector('main').addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-act]');
+    if (!b) return;
+    if (b.dataset.act === 'save') {
+      const tr = b.closest('tr');
+      const q = n => tr.querySelector(`[name=${n}]`);
+      const { error } = await sb.rpc('admin_update_profile', {
+        p_id: tr.dataset.id, p_name: q('name').value, p_dept: q('dept').value,
+        p_role: q('role').value, p_active: q('active').checked,
+      });
+      if (error) return toast(errMsg(error), true);
+      toast('저장했습니다.');
+      load();
+    } else if (b.dataset.act === 'uninvite') {
+      const { error } = await sb.from('allowed_emails').delete().eq('email', b.dataset.email);
+      if (error) return toast(errMsg(error), true);
+      load();
+    }
+  });
+
+  document.getElementById('copyInvite').onclick = () =>
+    copyText(`[사내 인트라넷 안내]\n앞으로 제안서·자료는 여기서 확인·결재합니다.\n${App.pageUrl('login.html')}\n회사 이메일 입력 → 메일로 온 6자리 코드 입력하면 로그인됩니다.`);
+
+  load();
+})().catch(e => console.warn(e.message));
+</script>
+</body>
+</html>

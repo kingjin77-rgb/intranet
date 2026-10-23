@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>문서함 · 사내 인트라넷</title>
+<meta property="og:title" content="사내 인트라넷 문서함">
+<meta property="og:description" content="제안서·자료 공유, 열람확인, 코멘트, 결재">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</head>
+<body>
+<main class="container">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <div style="flex:1;min-width:0">
+      <div class="page-title">문서함</div>
+      <p class="muted">카톡에는 문서 링크만 올리고, 확인·의견·결재는 여기서 하세요.</p>
+    </div>
+    <a class="btn" href="upload.html">＋ 문서 올리기</a>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-tab="all">전체</button>
+    <button class="tab" data-tab="myturn">내 결재 대기 <span id="myturnCount"></span></button>
+    <button class="tab" data-tab="unread">안 읽은 문서 <span id="unreadCount"></span></button>
+    <button class="tab" data-tab="mine">내가 올린 문서</button>
+  </div>
+  <input type="text" id="search" placeholder="제목·올린 사람 검색" style="margin-bottom:12px">
+
+  <div class="doc-list" id="list"><div class="empty">불러오는 중…</div></div>
+</main>
+<script>
+(async () => {
+  const { sb, esc, fmtDate, statusBadge, toast, errMsg, fileIcon } = App;
+  const me = await App.requireAuth();
+
+  let docs = [], seen = new Set(), memberCount = 0, tab = 'all';
+
+  async function load() {
+    const [d, v, m] = await Promise.all([
+      sb.from('document_summary').select('*').order('created_at', { ascending: false }),
+      sb.from('document_views').select('doc_id').eq('user_id', me.id),
+      sb.from('profiles').select('id', { count: 'exact', head: true }).eq('active', true),
+    ]);
+    const err = d.error || v.error || m.error;
+    if (err) return toast(errMsg(err), true);
+    docs = d.data;
+    seen = new Set(v.data.map(r => r.doc_id));
+    memberCount = m.count || 0;
+    render();
+  }
+
+  function render() {
+    const q = document.getElementById('search').value.trim().toLowerCase();
+    const myturn = docs.filter(x => x.current_approver_id === me.id);
+    const unread = docs.filter(x => !seen.has(x.id) && x.uploader_id !== me.id);
+    document.getElementById('myturnCount').textContent = myturn.length ? `(${myturn.length})` : '';
+    document.getElementById('unreadCount').textContent = unread.length ? `(${unread.length})` : '';
+
+    let rows = { all: docs, myturn, unread, mine: docs.filter(x => x.uploader_id === me.id) }[tab];
+    if (q) rows = rows.filter(x => x.title.toLowerCase().includes(q) || (x.uploader_name || '').toLowerCase().includes(q));
+
+    const list = document.getElementById('list');
+    if (!rows.length) {
+      list.innerHTML = `<div class="empty">${tab === 'myturn' ? '결재할 문서가 없습니다 👍' : '문서가 없습니다'}</div>`;
+      return;
+    }
+    list.innerHTML = rows.map(x => `
+      <a class="doc-item" href="doc.html?id=${encodeURIComponent(x.id)}">
+        <div class="row1">
+          <span>${fileIcon(x.file_type, x.file_name)}</span>
+          <span class="title">${esc(x.title)}</span>
+          ${x.current_approver_id === me.id ? '<span class="badge myturn">내 차례</span>' : ''}
+          ${!seen.has(x.id) && x.uploader_id !== me.id ? '<span class="badge pending">NEW</span>' : ''}
+          ${statusBadge(x.status)}
+        </div>
+        <div class="meta">
+          <span>${esc(x.uploader_name)} · ${fmtDate(x.created_at)}</span>
+          <span>👀 열람 ${x.view_count}/${memberCount}명</span>
+          <span>💬 ${x.comment_count}</span>
+        </div>
+      </a>`).join('');
+  }
+
+  document.getElementById('tabs').onclick = (e) => {
+    const b = e.target.closest('.tab');
+    if (!b) return;
+    tab = b.dataset.tab;
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === b));
+    render();
+  };
+  document.getElementById('search').oninput = render;
+
+  if (new URLSearchParams(location.search).get('tab') === 'myturn') document.querySelector('[data-tab=myturn]').click();
+  await load();
+
+  // 다른 사람이 문서를 올리거나 결재가 진행되면 목록 갱신
+  let t;
+  sb.channel('list')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'documents' }, () => { clearTimeout(t); t = setTimeout(load, 500); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'approval_steps' }, () => { clearTimeout(t); t = setTimeout(load, 500); })
+    .subscribe();
+})().catch(e => console.warn(e.message));
+</script>
+</body>
+</html>

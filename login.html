@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>로그인 · 사내 인트라넷</title>
+<meta property="og:title" content="사내 인트라넷">
+<meta property="og:description" content="제안서·자료 공유, 열람확인, 코멘트, 결재">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</head>
+<body>
+<main class="center-wrap">
+  <div class="card login-card">
+    <div class="page-title">📁 <span id="company"></span> 인트라넷</div>
+    <p class="muted">회사 이메일로 로그인하세요. 비밀번호 없이 메일로 받은 6자리 코드를 입력합니다.</p>
+
+    <form id="emailForm">
+      <label for="email">이메일</label>
+      <input type="email" id="email" required autocomplete="email" placeholder="name@company.com">
+      <div class="btn-row"><button class="btn" type="submit" style="width:100%">인증 코드 받기</button></div>
+    </form>
+
+    <form id="codeForm" hidden>
+      <p class="muted" style="margin-top:12px"><b id="sentTo"></b> 으로 메일을 보냈습니다.<br>메일의 <b>6자리 코드</b>를 입력하거나, 메일의 링크를 누르세요.</p>
+      <label for="code">인증 코드</label>
+      <input type="text" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="123456" required>
+      <div class="btn-row">
+        <button class="btn" type="submit" style="flex:1">로그인</button>
+        <button class="btn ghost" type="button" id="backBtn">이메일 다시 입력</button>
+      </div>
+      <p class="notice">카카오톡 안에서 열었다면 메일 링크 대신 <b>코드 입력</b>을 사용하세요. (카톡 브라우저와 메일앱은 로그인이 공유되지 않습니다)</p>
+    </form>
+  </div>
+</main>
+<script>
+(async () => {
+  const { sb, cfg, toast, errMsg } = App;
+  document.getElementById('company').textContent = cfg.COMPANY_NAME || '';
+  if (!sb) {
+    document.querySelector('.login-card').insertAdjacentHTML('beforeend',
+      '<p class="notice">config.js 에 Supabase 설정을 먼저 입력하세요.</p>');
+    return;
+  }
+
+  const params = new URLSearchParams(location.search);
+  const next = params.get('next') || '';
+  // 다른 사이트로 튕기지 않도록 같은 폴더의 html 페이지만 허용
+  const safeNext = /^[a-z]+\.html(\?[\w=&%-]*)?$/.test(next) ? next : 'index.html';
+  try { localStorage.setItem('intranet_next', safeNext); } catch {}
+
+  const goNext = () => {
+    let dest = safeNext;
+    try { dest = localStorage.getItem('intranet_next') || safeNext; localStorage.removeItem('intranet_next'); } catch {}
+    location.replace(dest);
+  };
+
+  // 메일 링크로 돌아온 경우 supabase-js 가 URL 의 토큰으로 세션을 만든다
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) return goNext();
+  sb.auth.onAuthStateChange((event, s) => { if (s) goNext(); });
+
+  const emailForm = document.getElementById('emailForm');
+  const codeForm = document.getElementById('codeForm');
+  let email = '';
+
+  emailForm.onsubmit = async (e) => {
+    e.preventDefault();
+    email = document.getElementById('email').value.trim().toLowerCase();
+    const btn = emailForm.querySelector('button');
+    btn.disabled = true;
+    const { error } = await sb.auth.signInWithOtp({
+      email,
+      options: { shouldCreateUser: true, emailRedirectTo: App.pageUrl('login.html') },
+    });
+    btn.disabled = false;
+    if (error) return toast(errMsg(error), true);
+    document.getElementById('sentTo').textContent = email;
+    emailForm.hidden = true;
+    codeForm.hidden = false;
+    document.getElementById('code').focus();
+  };
+
+  codeForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const token = document.getElementById('code').value.trim();
+    const btn = codeForm.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
+    btn.disabled = false;
+    if (error) return toast(errMsg(error), true);
+    goNext();
+  };
+
+  document.getElementById('backBtn').onclick = () => {
+    codeForm.hidden = true;
+    emailForm.hidden = false;
+  };
+})();
+</script>
+</body>
+</html>
