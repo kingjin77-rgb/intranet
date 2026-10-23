@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>문서 · 사내 인트라넷</title>
+<meta property="og:title" content="[사내 인트라넷] 문서 확인 요청">
+<meta property="og:description" content="눌러서 문서를 확인하고 의견·결재를 남겨주세요.">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</head>
+<body>
+<main class="container">
+  <div id="newBanner" class="card" hidden style="background:var(--soft)">
+    ✅ 등록되었습니다. <b>카톡 공유용 링크 복사</b>를 눌러 카톡방에 붙여넣으세요.
+  </div>
+
+  <div class="card">
+    <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">
+      <div style="flex:1;min-width:0">
+        <div class="page-title" id="title">불러오는 중…</div>
+        <p class="muted" id="meta"></p>
+      </div>
+      <span id="status"></span>
+    </div>
+    <p id="desc" style="margin-top:10px;white-space:pre-wrap;overflow-wrap:anywhere"></p>
+    <div class="btn-row">
+      <button class="btn" id="shareBtn">🔗 카톡 공유용 링크 복사</button>
+      <a class="btn ghost" id="openBtn" target="_blank" rel="noopener">새 창에서 열기</a>
+      <a class="btn ghost" id="downloadBtn">다운로드</a>
+      <button class="btn ghost" id="deleteBtn" hidden style="color:var(--bad)">삭제</button>
+    </div>
+  </div>
+
+  <div class="detail-grid">
+    <div>
+      <div class="card" id="viewerCard"></div>
+
+      <div class="card" id="commentsCard">
+        <h2>💬 코멘트 <span class="count" id="commentCount"></span></h2>
+        <div class="comments" id="comments"></div>
+        <form class="comment-form" id="commentForm">
+          <input type="text" class="page" id="pageNo" inputmode="numeric" placeholder="쪽" title="해당 페이지 (선택)">
+          <textarea id="commentBody" placeholder="의견을 남겨주세요" maxlength="2000" required></textarea>
+          <button class="btn" type="submit">등록</button>
+        </form>
+      </div>
+    </div>
+
+    <div>
+      <div class="card" id="approvalCard" hidden>
+        <h2>✍️ 결재</h2>
+        <ul class="steps" id="steps"></ul>
+        <form id="actForm" hidden>
+          <textarea id="actComment" placeholder="결재 의견 (반려 시 필수)" maxlength="1000"></textarea>
+          <div class="btn-row">
+            <button class="btn ok" type="button" data-decision="approved" style="flex:1">승인</button>
+            <button class="btn bad" type="button" data-decision="rejected" style="flex:1">반려</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card" id="viewsCard">
+        <h2>👀 열람 현황 <span class="count" id="viewCount"></span></h2>
+        <div class="progress"><div id="viewBar" style="width:0"></div></div>
+        <ul class="people" id="seen"></ul>
+        <div id="unseenWrap" hidden>
+          <p class="muted" style="margin:14px 0 6px">아직 안 본 사람</p>
+          <ul class="people unseen" id="unseen"></ul>
+          <div class="btn-row"><button class="btn ghost sm" id="nudgeBtn">미열람자 독촉 메시지 복사</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+(async () => {
+  const { sb, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, fileIcon } = App;
+  const me = await App.requireAuth();
+  const params = new URLSearchParams(location.search);
+  const docId = params.get('id');
+  const docUrl = App.pageUrl('doc.html', { id: docId });
+  if (params.get('new')) {
+    document.getElementById('newBanner').hidden = false;
+    history.replaceState(null, '', `doc.html?id=${encodeURIComponent(docId)}`);
+  }
+
+  const { data: doc, error } = await sb.from('documents').select('*').eq('id', docId).maybeSingle();
+  if (error || !doc) {
+    document.querySelector('main').innerHTML = '<div class="card"><h2>문서를 찾을 수 없습니다</h2><p class="muted">삭제되었거나 잘못된 링크입니다.</p><div class="btn-row"><a class="btn" href="index.html">문서함으로</a></div></div>';
+    return;
+  }
+  document.title = `${doc.title} · 사내 인트라넷`;
+
+  await sb.rpc('record_view', { p_doc_id: docId });
+
+  const members = await App.loadMembers();
+  const { data: uploader } = await sb.from('profiles').select('id,name,dept').eq('id', doc.uploader_id).maybeSingle();
+  const nameOf = {};
+  members.forEach(m => (nameOf[m.id] = m.name));
+  if (uploader) nameOf[uploader.id] = uploader.name;
+
+  // ----- 문서 정보 + 뷰어 -----
+  document.getElementById('title').textContent = doc.title;
+  document.getElementById('meta').textContent = `${nameOf[doc.uploader_id] || ''} · ${fmtDate(doc.created_at)} · ${doc.file_name} ${fmtSize(doc.file_size)}`;
+  document.getElementById('desc').textContent = doc.description || '';
+
+  const [view, dl] = await Promise.all([
+    sb.storage.from('docs').createSignedUrl(doc.file_path, 3600),
+    sb.storage.from('docs').createSignedUrl(doc.file_path, 3600, { download: doc.file_name }),
+  ]);
+  const viewUrl = view.data && view.data.signedUrl;
+  document.getElementById('openBtn').href = viewUrl || '#';
+  document.getElementById('downloadBtn').href = (dl.data && dl.data.signedUrl) || '#';
+
+  const lower = doc.file_name.toLowerCase();
+  const viewer = document.getElementById('viewerCard');
+  if (viewUrl && (doc.file_type === 'application/pdf' || lower.endsWith('.pdf'))) {
+    viewer.innerHTML = `<iframe class="viewer" src="${esc(viewUrl)}" title="${esc(doc.title)}"></iframe>
+      <p class="muted" style="margin-top:6px">휴대폰에서 안 보이면 위의 <b>새 창에서 열기</b>를 누르세요.</p>`;
+  } else if (viewUrl && (doc.file_type || '').startsWith('image/')) {
+    viewer.innerHTML = `<img src="${esc(viewUrl)}" alt="${esc(doc.title)}" style="max-width:100%;border-radius:10px">`;
+  } else {
+    viewer.innerHTML = `<div class="file-box"><span class="icon">${fileIcon(doc.file_type, doc.file_name)}</span>
+      <div><div class="name">${esc(doc.file_name)}</div>
+      <p class="muted">이 형식은 미리보기가 안 됩니다. 다운로드해서 확인하세요. (PDF로 올리면 바로 볼 수 있어요)</p></div></div>`;
+  }
+
+  if (doc.uploader_id === me.id || me.role === 'admin') {
+    const del = document.getElementById('deleteBtn');
+    del.hidden = false;
+    del.onclick = async () => {
+      if (!confirm('이 문서와 코멘트·결재 기록을 모두 삭제할까요?')) return;
+      await sb.storage.from('docs').remove([doc.file_path]);
+      const { error } = await sb.from('documents').delete().eq('id', docId);
+      if (error) return toast(errMsg(error), true);
+      location.replace('index.html');
+    };
+  }
+
+  // ----- 결재 -----
+  let steps = [];
+  async function loadSteps() {
+    const [s, d] = await Promise.all([
+      sb.from('approval_steps').select('*').eq('doc_id', docId).order('step_order'),
+      sb.from('documents').select('status').eq('id', docId).maybeSingle(),
+    ]);
+    steps = s.data || [];
+    doc.status = (d.data && d.data.status) || doc.status;
+    document.getElementById('status').innerHTML = statusBadge(doc.status);
+    const card = document.getElementById('approvalCard');
+    card.hidden = !steps.length;
+    const label = { waiting: '대기', current: '결재 차례', approved: '승인', rejected: '반려', skipped: '—' };
+    document.getElementById('steps').innerHTML = steps.map(st => `
+      <li class="${st.state}">
+        <span class="dot"></span>
+        <div class="who">${st.step_order}. ${esc(nameOf[st.approver_id] || '(퇴사자)')}${st.approver_id === me.id ? ' (나)' : ''}</div>
+        <div class="note">${label[st.state]}${st.acted_at ? ' · ' + fmtDate(st.acted_at) : ''}</div>
+        ${st.comment ? `<div class="say">${esc(st.comment)}</div>` : ''}
+      </li>`).join('');
+    const mine = steps.find(st => st.state === 'current' && st.approver_id === me.id);
+    document.getElementById('actForm').hidden = !mine;
+  }
+
+  document.getElementById('actForm').onclick = async (e) => {
+    const b = e.target.closest('button[data-decision]');
+    if (!b) return;
+    const mine = steps.find(st => st.state === 'current' && st.approver_id === me.id);
+    if (!mine) return;
+    const decision = b.dataset.decision;
+    const comment = document.getElementById('actComment').value;
+    if (decision === 'rejected' && !comment.trim()) return toast('반려 사유를 입력해 주세요.', true);
+    if (!confirm(decision === 'approved' ? '승인할까요?' : '반려할까요?')) return;
+    b.disabled = true;
+    const { error } = await sb.rpc('act_on_step', { p_step_id: mine.id, p_decision: decision, p_comment: comment });
+    b.disabled = false;
+    if (error) return toast(errMsg(error), true);
+    document.getElementById('actComment').value = '';
+    toast(decision === 'approved' ? '승인했습니다.' : '반려했습니다.');
+    loadSteps();
+  };
+
+  // ----- 열람 현황 -----
+  let unseenNames = [];
+  async function loadViews() {
+    const { data } = await sb.from('document_views').select('*').eq('doc_id', docId).order('first_viewed_at');
+    const views = data || [];
+    const seenIds = new Set(views.map(v => v.user_id));
+    const unseen = members.filter(m => !seenIds.has(m.id));
+    unseenNames = unseen.map(m => m.name);
+    const total = members.length;
+    const seenActive = members.length - unseen.length;
+    document.getElementById('viewCount').textContent = `${seenActive}/${total}명`;
+    document.getElementById('viewBar').style.width = total ? `${Math.round(seenActive / total * 100)}%` : '0';
+    document.getElementById('seen').innerHTML = views.map(v => `
+      <li><span>${esc(nameOf[v.user_id] || '(비활성)')}${v.view_count > 1 ? ` <span class="muted">×${v.view_count}</span>` : ''}</span>
+      <span class="when">${fmtDate(v.first_viewed_at)}</span></li>`).join('');
+    document.getElementById('unseenWrap').hidden = !unseen.length;
+    document.getElementById('unseen').innerHTML = unseen.map(m => `<li><span>${esc(m.name)}</span><span class="when">${esc(m.dept || '')}</span></li>`).join('');
+  }
+
+  document.getElementById('nudgeBtn').onclick = () =>
+    copyText(`[확인 부탁드립니다] ${doc.title}\n아직 확인 안 하신 분: ${unseenNames.join(', ')}\n${docUrl}`);
+
+  document.getElementById('shareBtn').onclick = () => {
+    const cur = steps.find(st => st.state === 'current');
+    const lines = [`[문서 확인 요청] ${doc.title}`];
+    if (doc.description) lines.push(doc.description.split('\n')[0].slice(0, 80));
+    if (cur) lines.push(`결재 차례: ${nameOf[cur.approver_id] || ''}`);
+    lines.push(docUrl);
+    copyText(lines.join('\n'));
+  };
+
+  // ----- 코멘트 -----
+  async function loadComments() {
+    const { data } = await sb.from('comments').select('*').eq('doc_id', docId).order('created_at');
+    const list = data || [];
+    document.getElementById('commentCount').textContent = list.length ? `${list.length}개` : '';
+    document.getElementById('comments').innerHTML = list.length ? list.map(c => `
+      <div class="comment">
+        <div class="head"><b>${esc(nameOf[c.user_id] || '(비활성)')}</b>
+          ${c.page_no ? `<span>p.${c.page_no}</span>` : ''}<span>${fmtDate(c.created_at)}</span>
+          ${c.user_id === me.id || me.role === 'admin' ? `<button class="del" data-id="${c.id}">삭제</button>` : ''}
+        </div>
+        <div class="body">${esc(c.body)}</div>
+      </div>`).join('') : '<p class="muted">첫 의견을 남겨주세요.</p>';
+  }
+
+  document.getElementById('comments').onclick = async (e) => {
+    const b = e.target.closest('.del');
+    if (!b || !confirm('코멘트를 삭제할까요?')) return;
+    const { error } = await sb.from('comments').delete().eq('id', b.dataset.id);
+    if (error) return toast(errMsg(error), true);
+    loadComments();
+  };
+
+  document.getElementById('commentForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const body = document.getElementById('commentBody');
+    const page = parseInt(document.getElementById('pageNo').value, 10);
+    if (!body.value.trim()) return;
+    const btn = e.target.querySelector('button');
+    btn.disabled = true;
+    const { error } = await sb.from('comments').insert({ doc_id: docId, user_id: me.id, body: body.value.trim(), page_no: Number.isFinite(page) ? page : null });
+    btn.disabled = false;
+    if (error) return toast(errMsg(error), true);
+    body.value = '';
+    document.getElementById('pageNo').value = '';
+    loadComments();
+  };
+
+  await Promise.all([loadSteps(), loadViews(), loadComments()]);
+
+  // 다른 사람의 코멘트·열람·결재를 실시간 반영
+  const filter = `doc_id=eq.${docId}`;
+  sb.channel(`doc-${docId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'comments', filter }, loadComments)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'document_views', filter }, loadViews)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'approval_steps', filter }, loadSteps)
+    .subscribe();
+})().catch(e => console.warn(e.message));
+</script>
+</body>
+</html>

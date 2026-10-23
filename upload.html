@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>문서 올리기 · 사내 인트라넷</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</head>
+<body>
+<main class="container" style="max-width:640px">
+  <div class="page-title">문서 올리기</div>
+  <p class="muted" style="margin-bottom:16px">PDF로 올리면 휴대폰에서도 바로 볼 수 있습니다. PPT·엑셀은 다운로드해서 봐야 합니다.</p>
+
+  <form class="card" id="form">
+    <label for="file">파일 (최대 50MB)</label>
+    <input type="file" id="file" required accept=".pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.hwp,.hwpx,.png,.jpg,.jpeg,.zip">
+
+    <label for="title">제목</label>
+    <input type="text" id="title" required maxlength="200" placeholder="예) ○○건설 제안서 v2">
+
+    <label for="desc">설명 / 요청사항 (선택)</label>
+    <textarea id="desc" maxlength="2000" placeholder="예) 3페이지 단가표 확인 부탁드립니다. 금요일까지 결재 요청드립니다."></textarea>
+
+    <label>결재선 (순서대로 결재합니다 · 비워두면 결재 없이 공유만)</label>
+    <div style="display:flex;gap:8px">
+      <select id="approverSelect"><option value="">결재자 선택…</option></select>
+      <button class="btn ghost" type="button" id="addApprover">추가</button>
+    </div>
+    <ul class="picker" id="picker"></ul>
+
+    <div class="btn-row">
+      <button class="btn" type="submit" id="submitBtn" style="flex:1">올리기</button>
+      <a class="btn ghost" href="index.html">취소</a>
+    </div>
+    <p class="muted" id="progress" style="margin-top:8px"></p>
+  </form>
+</main>
+<script>
+(async () => {
+  const { sb, esc, toast, errMsg } = App;
+  const me = await App.requireAuth();
+  const MAX = 50 * 1024 * 1024;
+
+  const members = (await App.loadMembers()).filter(m => m.id !== me.id);
+  const byId = Object.fromEntries(members.map(m => [m.id, m]));
+  const approvers = [];
+
+  const select = document.getElementById('approverSelect');
+  function renderSelect() {
+    select.innerHTML = '<option value="">결재자 선택…</option>' + members
+      .filter(m => !approvers.includes(m.id))
+      .map(m => `<option value="${m.id}">${esc(m.name)}${m.dept ? ` (${esc(m.dept)})` : ''}</option>`).join('');
+  }
+  function renderPicker() {
+    document.getElementById('picker').innerHTML = approvers.map((id, i) => `
+      <li>
+        <span class="n">${i + 1}</span>
+        <span class="grow">${esc(byId[id].name)} <span class="muted">${esc(byId[id].dept || '')}</span></span>
+        <button type="button" data-act="up" data-i="${i}" ${i === 0 ? 'disabled' : ''}>▲</button>
+        <button type="button" data-act="down" data-i="${i}" ${i === approvers.length - 1 ? 'disabled' : ''}>▼</button>
+        <button type="button" data-act="del" data-i="${i}">✕</button>
+      </li>`).join('');
+    renderSelect();
+  }
+  renderSelect();
+
+  document.getElementById('addApprover').onclick = () => {
+    if (!select.value) return;
+    approvers.push(select.value);
+    renderPicker();
+  };
+  document.getElementById('picker').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const i = +b.dataset.i;
+    if (b.dataset.act === 'del') approvers.splice(i, 1);
+    else {
+      const j = b.dataset.act === 'up' ? i - 1 : i + 1;
+      [approvers[i], approvers[j]] = [approvers[j], approvers[i]];
+    }
+    renderPicker();
+  };
+
+  const fileInput = document.getElementById('file');
+  fileInput.onchange = () => {
+    const f = fileInput.files[0];
+    const title = document.getElementById('title');
+    if (f && !title.value) title.value = f.name.replace(/\.[^.]+$/, '');
+  };
+
+  document.getElementById('form').onsubmit = async (e) => {
+    e.preventDefault();
+    const f = fileInput.files[0];
+    if (!f) return;
+    if (f.size > MAX) return toast('50MB 이하 파일만 올릴 수 있습니다.', true);
+
+    const btn = document.getElementById('submitBtn');
+    const progress = document.getElementById('progress');
+    btn.disabled = true;
+    progress.textContent = '파일 올리는 중…';
+
+    // 저장소 키에는 한글을 쓸 수 없어 무작위 이름을 쓰고, 원래 이름은 DB에 저장
+    const ext = (f.name.match(/\.([A-Za-z0-9]{1,8})$/) || [, 'bin'])[1].toLowerCase();
+    const rand = crypto.randomUUID ? crypto.randomUUID()
+      : Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+    const path = `${me.id}/${rand}.${ext}`;
+    const up = await sb.storage.from('docs').upload(path, f, { contentType: f.type || 'application/octet-stream' });
+    if (up.error) {
+      btn.disabled = false;
+      progress.textContent = '';
+      return toast(errMsg(up.error), true);
+    }
+
+    progress.textContent = '등록 중…';
+    const { data: docId, error } = await sb.rpc('create_document', {
+      p_title: document.getElementById('title').value,
+      p_description: document.getElementById('desc').value,
+      p_file_path: path,
+      p_file_name: f.name,
+      p_file_type: f.type || ext,
+      p_file_size: f.size,
+      p_approvers: approvers,
+    });
+    if (error) {
+      await sb.storage.from('docs').remove([path]);
+      btn.disabled = false;
+      progress.textContent = '';
+      return toast(errMsg(error), true);
+    }
+    location.replace(`doc.html?id=${encodeURIComponent(docId)}&new=1`);
+  };
+})().catch(e => console.warn(e.message));
+</script>
+</body>
+</html>
