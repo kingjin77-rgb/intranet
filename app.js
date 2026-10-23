@@ -140,5 +140,68 @@
     return '📄';
   }
 
-  window.App = { sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, fileIcon, STATUS_LABEL };
+  // ----- 홈 화면 앱 (PWA) -----
+  const isStandalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const ua = navigator.userAgent;
+  const isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/.test(ua);
+  const isInApp = /KAKAOTALK|NAVER|Instagram|FBAN|FBAV|Line\//i.test(ua);
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+
+  function tipDismissed() {
+    try { return localStorage.getItem('intranet_install_tip') === 'off'; } catch { return false; }
+  }
+
+  function showInstallTip(text, onInstall) {
+    if (isStandalone || tipDismissed() || document.querySelector('.install-tip')) return;
+    const render = () => {
+      const el = document.createElement('div');
+      el.className = 'install-tip';
+      el.innerHTML = `<img src="icons/icon-192.png" alt="">
+        <div class="txt">${text}</div>
+        ${onInstall ? '<button class="btn sm" data-act="install">설치</button>' : ''}
+        <button class="close" data-act="close" aria-label="닫기">✕</button>`;
+      el.onclick = async (e) => {
+        const act = e.target.closest('[data-act]')?.dataset.act;
+        if (act === 'install') await onInstall();
+        if (act === 'install' || act === 'close') {
+          el.remove();
+          try { localStorage.setItem('intranet_install_tip', 'off'); } catch {}
+        }
+      };
+      document.body.appendChild(el);
+    };
+    document.body ? render() : document.addEventListener('DOMContentLoaded', render);
+  }
+
+  // 안드로이드·PC 크롬: 브라우저가 설치 가능하다고 알려주면 버튼 하나로 설치
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    showInstallTip('<b>인트라넷을 앱으로 설치</b>하면 홈 화면에서 바로 열 수 있어요.', async () => {
+      e.prompt();
+      await e.userChoice.catch(() => {});
+    });
+  });
+
+  // 카톡 안 브라우저나 아이폰 사파리는 설치 버튼이 없어서 방법을 안내
+  if (!isStandalone) {
+    if (isInApp && (isIOS || isAndroid)) {
+      showInstallTip(isIOS
+        ? '앱으로 설치하려면 오른쪽 아래 <b>⋯ → Safari로 열기</b> 후 설치하세요.'
+        : '앱으로 설치하려면 오른쪽 위 <b>⋮ → 다른 브라우저로 열기</b>(크롬) 후 설치하세요.');
+    } else if (isIOS) {
+      showInstallTip('앱으로 설치: 아래 <b>공유 버튼(⬆︎) → 홈 화면에 추가</b>');
+    }
+  }
+
+  // 앱 아이콘에 숫자 배지 (지원하는 기기만)
+  function setBadge(n) {
+    if (!('setAppBadge' in navigator)) return;
+    (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
+  }
+
+  window.App = { sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, fileIcon, setBadge, STATUS_LABEL };
 })();

@@ -38,6 +38,8 @@ a { color: var(--primary); text-decoration: none; }
   background: linear-gradient(135deg, var(--primary) 0%, #1e3f73 100%);
   color: #fff;
   position: sticky; top: 0; z-index: 10;
+  /* 홈 화면 앱(아이폰)에서 상태바·노치 아래로 내리기 */
+  padding-top: env(safe-area-inset-top);
 }
 .topbar-inner {
   max-width: 960px; margin: 0 auto;
@@ -209,12 +211,12 @@ th { color: var(--text-muted); font-weight: 500; font-size: 12px; }
 td input[type=text], td select { padding: 5px 8px; font-size: 13px; min-width: 90px; }
 
 /* Login */
-.center-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.center-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }
 .login-card { width: 100%; max-width: 400px; }
 
 /* Toast */
 #toast {
-  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+  position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%);
   background: var(--text); color: #fff; padding: 10px 18px; border-radius: 10px;
   font-size: 13px; opacity: 0; pointer-events: none; transition: opacity 0.2s; z-index: 100;
   max-width: calc(100% - 32px);
@@ -223,3 +225,14 @@ td input[type=text], td select { padding: 5px 8px; font-size: 13px; min-width: 9
 #toast.error { background: var(--bad); }
 
 .notice { background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-top: 10px; }
+
+/* 앱 설치 안내 */
+.install-tip {
+  position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 50;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow);
+  padding: 12px 14px; display: flex; gap: 10px; align-items: center; font-size: 13px;
+  max-width: 480px; margin: 0 auto;
+}
+.install-tip img { width: 40px; height: 40px; border-radius: 10px; flex-shrink: 0; }
+.install-tip .txt { flex: 1; min-width: 0; }
+.install-tip .close { background: none; border: none; font-size: 18px; color: var(--text-muted); cursor: pointer; padding: 4px; }
