@@ -126,10 +126,10 @@ begin
     raise exception '잘못된 파일 경로입니다';
   end if;
   if v_n <> (select count(distinct x) from unnest(p_approvers) x) then
-    raise exception '결재자가 중복되었습니다';
+    raise exception '컨펌자가 중복되었습니다';
   end if;
   if v_n > 0 and v_n <> (select count(*) from public.profiles where id = any (p_approvers) and active) then
-    raise exception '존재하지 않거나 비활성화된 결재자가 있습니다';
+    raise exception '존재하지 않거나 비활성화된 컨펌자가 있습니다';
   end if;
 
   insert into public.documents (title, description, file_path, file_name, file_type, file_size, uploader_id, status)
@@ -151,14 +151,14 @@ returns void language plpgsql security definer set search_path = public as $$
 declare
   s public.approval_steps;
 begin
-  if p_decision not in ('approved', 'rejected') then raise exception '잘못된 결재 값입니다'; end if;
+  if p_decision not in ('approved', 'rejected') then raise exception '잘못된 컨펌 값입니다'; end if;
   if p_decision = 'rejected' and coalesce(trim(p_comment), '') = '' then
     raise exception '반려 사유를 입력해 주세요';
   end if;
 
   select * into s from public.approval_steps where id = p_step_id for update;
-  if not found then raise exception '결재 단계를 찾을 수 없습니다'; end if;
-  if s.approver_id <> auth.uid() or not public.is_member() then raise exception '본인 결재 차례가 아닙니다'; end if;
+  if not found then raise exception '컨펌 단계를 찾을 수 없습니다'; end if;
+  if s.approver_id <> auth.uid() or not public.is_member() then raise exception '본인 컨펌 차례가 아닙니다'; end if;
   if s.state <> 'current' then raise exception '이미 처리되었거나 아직 차례가 아닙니다'; end if;
 
   update public.approval_steps
