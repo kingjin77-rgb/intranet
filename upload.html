@@ -20,11 +20,13 @@
 <body>
 <main class="container" style="max-width:640px">
   <div class="page-title">문서 올리기</div>
-  <p class="muted" style="margin-bottom:16px">PDF로 올리면 휴대폰에서도 바로 볼 수 있습니다. PPT·엑셀은 다운로드해서 봐야 합니다.</p>
+  <p class="muted" style="margin-bottom:16px">PDF로 올리면 휴대폰에서도 바로 볼 수 있습니다.</p>
 
   <form class="card" id="form">
     <label for="file">파일 (최대 50MB)</label>
     <input type="file" id="file" required accept=".pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.hwp,.hwpx,.png,.jpg,.jpeg,.zip">
+    <p class="muted" style="margin-top:6px">✅ 바로 보기: PDF, 사진(JPG·PNG) &nbsp;·&nbsp; ⬇️ 다운로드해야 보임: PPT, 엑셀, 워드, 한글, ZIP</p>
+    <div class="notice" id="previewNotice" hidden></div>
 
     <label for="title">제목</label>
     <input type="text" id="title" required maxlength="200" placeholder="예) ○○건설 제안서 v2">
@@ -93,10 +95,30 @@
   };
 
   const fileInput = document.getElementById('file');
+  // 미리보기가 안 되는 형식이면 올리기 전에 PDF 변환 방법을 안내
+  const HOW_TO_PDF = {
+    ppt: 'PowerPoint에서 <b>파일 → 다른 이름으로 저장 → 파일 형식: PDF</b>',
+    xls: '엑셀에서 <b>파일 → 다른 이름으로 저장 → 파일 형식: PDF</b>',
+    doc: '워드에서 <b>파일 → 다른 이름으로 저장 → 파일 형식: PDF</b>',
+    hwp: '한글에서 <b>파일 → PDF로 저장하기</b>',
+  };
   fileInput.onchange = () => {
     const f = fileInput.files[0];
     const title = document.getElementById('title');
     if (f && !title.value) title.value = f.name.replace(/\.[^.]+$/, '');
+
+    const notice = document.getElementById('previewNotice');
+    const ext = f ? (f.name.match(/\.([A-Za-z0-9]+)$/) || [, ''])[1].toLowerCase() : '';
+    const previewable = ext === 'pdf' || ['png', 'jpg', 'jpeg'].includes(ext);
+    if (!f || previewable) {
+      notice.hidden = true;
+    } else {
+      const kind = ext.replace(/x$/, '');
+      notice.innerHTML = `이 파일(${esc(ext.toUpperCase())})은 <b>미리보기가 안 되고</b> 다운로드해야 볼 수 있습니다. 휴대폰에서는 열리지 않을 수 있어요.`
+        + (HOW_TO_PDF[kind] ? `<br>👉 PDF로 바꿔서 올리면 바로 보입니다: ${HOW_TO_PDF[kind]}` : '');
+      notice.hidden = false;
+    }
+    if (f && f.size > MAX) toast('50MB 이하 파일만 올릴 수 있습니다.', true);
   };
 
   document.getElementById('form').onsubmit = async (e) => {
