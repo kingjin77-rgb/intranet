@@ -30,11 +30,11 @@
     <input type="text" id="title" required maxlength="200" placeholder="예) ○○건설 제안서 v2">
 
     <label for="desc">설명 / 요청사항 (선택)</label>
-    <textarea id="desc" maxlength="2000" placeholder="예) 3페이지 단가표 확인 부탁드립니다. 금요일까지 결재 요청드립니다."></textarea>
+    <textarea id="desc" maxlength="2000" placeholder="예) 3페이지 단가표 확인 부탁드립니다. 금요일까지 컨펌 요청드립니다."></textarea>
 
-    <label>결재선 (순서대로 결재합니다 · 비워두면 결재 없이 공유만)</label>
+    <label>컨펌 순서 (순서대로 컨펌합니다 · 비워두면 컨펌 없이 공유만)</label>
     <div style="display:flex;gap:8px">
-      <select id="approverSelect"><option value="">결재자 선택…</option></select>
+      <select id="approverSelect"><option value="">컨펌자 선택…</option></select>
       <button class="btn ghost" type="button" id="addApprover">추가</button>
     </div>
     <ul class="picker" id="picker"></ul>
@@ -58,7 +58,7 @@
 
   const select = document.getElementById('approverSelect');
   function renderSelect() {
-    select.innerHTML = '<option value="">결재자 선택…</option>' + members
+    select.innerHTML = '<option value="">컨펌자 선택…</option>' + members
       .filter(m => !approvers.includes(m.id))
       .map(m => `<option value="${m.id}">${esc(m.name)}${m.dept ? ` (${esc(m.dept)})` : ''}</option>`).join('');
   }

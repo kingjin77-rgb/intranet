@@ -1,7 +1,7 @@
 {
   "name": "제이엘 인트라넷",
   "short_name": "인트라넷",
-  "description": "제안서·자료 공유, 열람확인, 코멘트, 결재",
+  "description": "제안서·자료 공유, 열람확인, 코멘트, 컨펌",
   "lang": "ko",
   "id": "./",
   "start_url": "./index.html",

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>문서함 · 사내 인트라넷</title>
 <meta property="og:title" content="사내 인트라넷 문서함">
-<meta property="og:description" content="제안서·자료 공유, 열람확인, 코멘트, 결재">
+<meta property="og:description" content="제안서·자료 공유, 열람확인, 코멘트, 컨펌">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#1a4f8a">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -24,14 +24,14 @@
   <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
     <div style="flex:1;min-width:0">
       <div class="page-title">문서함</div>
-      <p class="muted">카톡에는 문서 링크만 올리고, 확인·의견·결재는 여기서 하세요.</p>
+      <p class="muted">카톡에는 문서 링크만 올리고, 확인·의견·컨펌는 여기서 하세요.</p>
     </div>
     <a class="btn" href="upload.html">＋ 문서 올리기</a>
   </div>
 
   <div class="tabs" id="tabs">
     <button class="tab active" data-tab="all">전체</button>
-    <button class="tab" data-tab="myturn">내 결재 대기 <span id="myturnCount"></span></button>
+    <button class="tab" data-tab="myturn">내 컨펌 대기 <span id="myturnCount"></span></button>
     <button class="tab" data-tab="unread">안 읽은 문서 <span id="unreadCount"></span></button>
     <button class="tab" data-tab="mine">내가 올린 문서</button>
   </div>
@@ -73,7 +73,7 @@
 
     const list = document.getElementById('list');
     if (!rows.length) {
-      list.innerHTML = `<div class="empty">${tab === 'myturn' ? '결재할 문서가 없습니다 👍' : '문서가 없습니다'}</div>`;
+      list.innerHTML = `<div class="empty">${tab === 'myturn' ? '컨펌할 문서가 없습니다 👍' : '문서가 없습니다'}</div>`;
       return;
     }
     list.innerHTML = rows.map(x => `
@@ -105,7 +105,7 @@
   if (new URLSearchParams(location.search).get('tab') === 'myturn') document.querySelector('[data-tab=myturn]').click();
   await load();
 
-  // 다른 사람이 문서를 올리거나 결재가 진행되면 목록 갱신
+  // 다른 사람이 문서를 올리거나 컨펌가 진행되면 목록 갱신
   let t;
   sb.channel('list')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'documents' }, () => { clearTimeout(t); t = setTimeout(load, 500); })

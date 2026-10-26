@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>문서 · 사내 인트라넷</title>
 <meta property="og:title" content="[사내 인트라넷] 문서 확인 요청">
-<meta property="og:description" content="눌러서 문서를 확인하고 의견·결재를 남겨주세요.">
+<meta property="og:description" content="눌러서 문서를 확인하고 의견·컨펌를 남겨주세요.">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#1a4f8a">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -59,12 +59,12 @@
 
     <div>
       <div class="card" id="approvalCard" hidden>
-        <h2>✍️ 결재</h2>
+        <h2>✍️ 컨펌</h2>
         <ul class="steps" id="steps"></ul>
         <form id="actForm" hidden>
-          <textarea id="actComment" placeholder="결재 의견 (반려 시 필수)" maxlength="1000"></textarea>
+          <textarea id="actComment" placeholder="컨펌 의견 (반려 시 필수)" maxlength="1000"></textarea>
           <div class="btn-row">
-            <button class="btn ok" type="button" data-decision="approved" style="flex:1">승인</button>
+            <button class="btn ok" type="button" data-decision="approved" style="flex:1">컨펌</button>
             <button class="btn bad" type="button" data-decision="rejected" style="flex:1">반려</button>
           </div>
         </form>
@@ -140,7 +140,7 @@
     const del = document.getElementById('deleteBtn');
     del.hidden = false;
     del.onclick = async () => {
-      if (!confirm('이 문서와 코멘트·결재 기록을 모두 삭제할까요?')) return;
+      if (!confirm('이 문서와 코멘트·컨펌 기록을 모두 삭제할까요?')) return;
       await sb.storage.from('docs').remove([doc.file_path]);
       const { error } = await sb.from('documents').delete().eq('id', docId);
       if (error) return toast(errMsg(error), true);
@@ -148,7 +148,7 @@
     };
   }
 
-  // ----- 결재 -----
+  // ----- 컨펌 -----
   let steps = [];
   async function loadSteps() {
     const [s, d] = await Promise.all([
@@ -160,7 +160,7 @@
     document.getElementById('status').innerHTML = statusBadge(doc.status);
     const card = document.getElementById('approvalCard');
     card.hidden = !steps.length;
-    const label = { waiting: '대기', current: '결재 차례', approved: '승인', rejected: '반려', skipped: '—' };
+    const label = { waiting: '대기', current: '컨펌 차례', approved: '컨펌', rejected: '반려', skipped: '—' };
     document.getElementById('steps').innerHTML = steps.map(st => `
       <li class="${st.state}">
         <span class="dot"></span>
@@ -180,13 +180,13 @@
     const decision = b.dataset.decision;
     const comment = document.getElementById('actComment').value;
     if (decision === 'rejected' && !comment.trim()) return toast('반려 사유를 입력해 주세요.', true);
-    if (!confirm(decision === 'approved' ? '승인할까요?' : '반려할까요?')) return;
+    if (!confirm(decision === 'approved' ? '컨펌할까요?' : '반려할까요?')) return;
     b.disabled = true;
     const { error } = await sb.rpc('act_on_step', { p_step_id: mine.id, p_decision: decision, p_comment: comment });
     b.disabled = false;
     if (error) return toast(errMsg(error), true);
     document.getElementById('actComment').value = '';
-    toast(decision === 'approved' ? '승인했습니다.' : '반려했습니다.');
+    toast(decision === 'approved' ? '컨펌했습니다.' : '반려했습니다.');
     loadSteps();
   };
 
@@ -216,7 +216,7 @@
     const cur = steps.find(st => st.state === 'current');
     const lines = [`[문서 확인 요청] ${doc.title}`];
     if (doc.description) lines.push(doc.description.split('\n')[0].slice(0, 80));
-    if (cur) lines.push(`결재 차례: ${nameOf[cur.approver_id] || ''}`);
+    if (cur) lines.push(`컨펌 차례: ${nameOf[cur.approver_id] || ''}`);
     lines.push(docUrl);
     copyText(lines.join('\n'));
   };
@@ -261,7 +261,7 @@
 
   await Promise.all([loadSteps(), loadViews(), loadComments()]);
 
-  // 다른 사람의 코멘트·열람·결재를 실시간 반영
+  // 다른 사람의 코멘트·열람·컨펌를 실시간 반영
   const filter = `doc_id=eq.${docId}`;
   sb.channel(`doc-${docId}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'comments', filter }, loadComments)
