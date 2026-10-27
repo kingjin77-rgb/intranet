@@ -88,12 +88,64 @@
           <a href="index.html">문서함</a>
           <a href="upload.html">＋ 올리기</a>
           ${profile && profile.role === 'admin' ? '<a href="admin.html">직원관리</a>' : ''}
+          ${profile && 'Notification' in window && Notification.permission === 'default' ? '<button id="notifyBtn">🔔 알림 켜기</button>' : ''}
           ${profile ? `<span class="me">${esc(profile.name)}</span><button id="logoutBtn">로그아웃</button>` : ''}
         </nav>
       </div>`;
     document.body.prepend(header);
     const btn = header.querySelector('#logoutBtn');
-    if (btn) btn.onclick = async () => { await sb.auth.signOut(); location.href = 'login.html'; };
+    if (btn) btn.onclick = async () => {
+      try { localStorage.removeItem(WATCH_KEY); } catch {}
+      await sb.auth.signOut();
+      location.href = 'login.html';
+    };
+    const nb = header.querySelector('#notifyBtn');
+    if (nb) nb.onclick = async () => {
+      const r = await Notification.requestPermission();
+      nb.remove();
+      toast(r === 'granted' ? '알림을 켰습니다. 새 문서와 컨펌 차례를 알려드려요.' : '알림이 꺼져 있습니다. 브라우저 설정에서 켤 수 있어요.', r !== 'granted');
+    };
+  }
+
+  // ----- 새 문서·내 컨펌 차례 알림 (창이 열려 있는 동안 1분마다 확인) -----
+  const WATCH_KEY = 'intranet_watch';
+  function notify(title, body, docId) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const n = new Notification(title, { body, icon: 'icons/icon-192.png', tag: `${title}-${docId}` });
+    n.onclick = () => { window.focus(); location.href = `doc.html?id=${encodeURIComponent(docId)}`; n.close(); };
+  }
+
+  function startWatch(me) {
+    let state = null;
+    try { state = JSON.parse(localStorage.getItem(WATCH_KEY) || 'null'); } catch {}
+    if (!state || state.user !== me.id) state = null;
+
+    async function check() {
+      const [steps, docs] = await Promise.all([
+        sb.from('approval_steps').select('id,doc_id,documents(title)').eq('approver_id', me.id).eq('state', 'current'),
+        sb.from('documents').select('id,title,uploader_id,created_at').order('created_at', { ascending: false }).limit(20),
+      ]);
+      if (steps.error || docs.error) return;
+      const stepIds = steps.data.map(s => s.id);
+      const lastDocAt = docs.data[0] ? docs.data[0].created_at : '';
+      // 처음 한 번은 기준만 잡고 알리지 않는다
+      if (state) {
+        const myTurn = steps.data.filter(s => !state.steps.includes(s.id));
+        myTurn.forEach(s => notify('✍️ 컨펌 차례입니다', (s.documents && s.documents.title) || '', s.doc_id));
+        docs.data.filter(d => d.created_at > state.lastDocAt && d.uploader_id !== me.id && !myTurn.some(s => s.doc_id === d.id))
+          .forEach(d => notify('📄 새 문서가 올라왔습니다', d.title, d.id));
+      }
+      const prevAt = state ? state.lastDocAt : '';
+      state = { user: me.id, steps: stepIds, lastDocAt: lastDocAt > prevAt ? lastDocAt : prevAt };
+      try { localStorage.setItem(WATCH_KEY, JSON.stringify(state)); } catch {}
+      setBadge(stepIds.length);
+      // 크롬 확장프로그램이 있으면 툴바 아이콘에도 숫자를 표시
+      window.postMessage({ type: 'intranet-badge', count: stepIds.length }, location.origin);
+    }
+    const safeCheck = () => check().catch(e => console.warn('알림 확인 실패', e));
+    safeCheck();
+    setInterval(safeCheck, 60 * 1000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) safeCheck(); });
   }
 
   function showFatal(html) {
@@ -122,6 +174,7 @@
       throw new Error('inactive');
     }
     renderHeader(profile);
+    startWatch(profile);
     return profile;
   }
 
