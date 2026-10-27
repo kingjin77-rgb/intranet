@@ -131,6 +131,18 @@
     return data;
   }
 
+  // 필요할 때만 외부 라이브러리를 불러온다 (같은 주소는 한 번만)
+  const scriptCache = {};
+  function loadScript(src) {
+    return scriptCache[src] || (scriptCache[src] = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = () => { delete scriptCache[src]; reject(new Error('라이브러리를 불러오지 못했습니다')); };
+      document.head.appendChild(s);
+    }));
+  }
+
   function fileIcon(type, name) {
     const n = (name || '').toLowerCase();
     if (type === 'application/pdf' || n.endsWith('.pdf')) return '📕';
@@ -204,5 +216,5 @@
     (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
   }
 
-  window.App = { sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, fileIcon, setBadge, STATUS_LABEL };
+  window.App = { sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, STATUS_LABEL };
 })();
