@@ -236,3 +236,12 @@ td input[type=text], td select { padding: 5px 8px; font-size: 13px; min-width: 9
 .install-tip img { width: 40px; height: 40px; border-radius: 10px; flex-shrink: 0; }
 .install-tip .txt { flex: 1; min-width: 0; }
 .install-tip .close { background: none; border: none; font-size: 18px; color: var(--text-muted); cursor: pointer; padding: 4px; }
+
+/* 워드·엑셀 미리보기 */
+.office-view { height: 70vh; overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: #f8fafd; }
+.docx-view .docx-wrapper { background: #e9eef5; padding: 12px; align-items: flex-start; }
+.docx-view .docx-wrapper > section.docx { box-shadow: var(--shadow); margin-bottom: 12px; }
+.sheet-tabs { margin: 0 0 8px; }
+table.sheet { border-collapse: collapse; font-size: 12px; background: #fff; }
+table.sheet th, table.sheet td { border: 1px solid #dfe5ee; padding: 3px 6px; white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+table.sheet th { position: sticky; left: 0; background: #f1f5fa; color: var(--text-muted); font-weight: 400; text-align: right; }

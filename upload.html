@@ -25,7 +25,7 @@
   <form class="card" id="form">
     <label for="file">파일 (최대 50MB)</label>
     <input type="file" id="file" required accept=".pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.hwp,.hwpx,.png,.jpg,.jpeg,.zip">
-    <p class="muted" style="margin-top:6px">✅ 바로 보기: PDF, 사진(JPG·PNG) &nbsp;·&nbsp; ⬇️ 다운로드해야 보임: PPT, 엑셀, 워드, 한글, ZIP</p>
+    <p class="muted" style="margin-top:6px">✅ 바로 보기: PDF, 사진, 워드(.docx), 엑셀(.xlsx) &nbsp;·&nbsp; ⬇️ 다운로드해야 보임: PPT, 한글, ZIP, 옛날 형식(.doc·.xls)</p>
     <div class="notice" id="previewNotice" hidden></div>
 
     <label for="title">제목</label>
@@ -109,7 +109,7 @@
 
     const notice = document.getElementById('previewNotice');
     const ext = f ? (f.name.match(/\.([A-Za-z0-9]+)$/) || [, ''])[1].toLowerCase() : '';
-    const previewable = ext === 'pdf' || ['png', 'jpg', 'jpeg'].includes(ext);
+    const previewable = ['pdf', 'png', 'jpg', 'jpeg', 'docx', 'xlsx'].includes(ext);
     if (!f || previewable) {
       notice.hidden = true;
     } else {
