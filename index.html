@@ -65,7 +65,6 @@
     const myturn = docs.filter(x => x.current_approver_id === me.id);
     const unread = docs.filter(x => !seen.has(x.id) && x.uploader_id !== me.id);
     document.getElementById('myturnCount').textContent = myturn.length ? `(${myturn.length})` : '';
-    App.setBadge(myturn.length);
     document.getElementById('unreadCount').textContent = unread.length ? `(${unread.length})` : '';
 
     let rows = { all: docs, myturn, unread, mine: docs.filter(x => x.uploader_id === me.id) }[tab];
