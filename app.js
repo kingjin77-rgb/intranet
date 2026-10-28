@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '3.0.0';
+  const APP_VERSION = '3.1.0';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -121,7 +121,7 @@
       const r = await Notification.requestPermission();
       nb.remove();
       if (r === 'granted') subscribePush(profile).catch(e => console.warn('푸시 등록 실패', e));
-      toast(r === 'granted' ? '알림을 켰습니다. 새 문서와 컨펌 차례를 알려드려요.' : '알림이 꺼져 있습니다. 브라우저 설정에서 켤 수 있어요.', r !== 'granted');
+      toast(r === 'granted' ? '알림을 켰습니다. 새 문서·코멘트·열람 확인·컨펌을 알려드려요.' : '알림이 꺼져 있습니다. 브라우저 설정에서 켤 수 있어요.', r !== 'granted');
     };
   }
 
@@ -247,8 +247,43 @@
       }
       try { localStorage.setItem(WATCH3, JSON.stringify({ user: me.id, tasks: t.data.map(x => x.id), notices: n.data.map(x => x.id) })); } catch {}
     }
+    // 내 문서·내가 관여한 문서의 새 코멘트, 내 문서를 누가 열어봤는지, 컨펌·반려 결과
+    const WATCH_ACT = 'intranet_watch_act';
+    async function checkActivity() {
+      let st = null;
+      try { st = JSON.parse(localStorage.getItem(WATCH_ACT) || 'null'); } catch {}
+      if (st && st.user !== me.id) st = null;
+      // 서버 시각 기준 커서: 처음엔 지금, 이후엔 마지막으로 본 코멘트·열람 시각
+      const since = st ? st.since : new Date().toISOString();
+      const [mine, myCm, mySteps] = await Promise.all([
+        sb.from('documents').select('id,title,status').eq('uploader_id', me.id).order('created_at', { ascending: false }).limit(200),
+        sb.from('comments').select('doc_id').eq('user_id', me.id).limit(500),
+        sb.from('approval_steps').select('doc_id').eq('approver_id', me.id).limit(500),
+      ]);
+      if (mine.error || myCm.error || mySteps.error) return;
+      const myIds = mine.data.map(d => d.id);
+      const related = [...new Set([...myIds, ...myCm.data.map(r => r.doc_id), ...mySteps.data.map(r => r.doc_id)])];
+      const [cm, vw] = await Promise.all([
+        related.length ? sb.from('comments').select('id,doc_id,body,user_id,created_at,profiles(name),documents(title)')
+          .in('doc_id', related).neq('user_id', me.id).gt('created_at', since).order('created_at') : { data: [] },
+        myIds.length ? sb.from('document_views').select('doc_id,user_id,first_viewed_at,profiles(name),documents(title)')
+          .in('doc_id', myIds).neq('user_id', me.id).gt('first_viewed_at', since) : { data: [] },
+      ]);
+      if (cm.error || vw.error) return;
+      const status = Object.fromEntries(mine.data.map(d => [d.id, d.status]));
+      if (st) {
+        cm.data.forEach(c => notify(`💬 ${(c.profiles && c.profiles.name) || ''}: ${(c.documents && c.documents.title) || ''}`, c.body.slice(0, 80), c.doc_id));
+        vw.data.forEach(v => notify(`👀 ${(v.profiles && v.profiles.name) || ''}님이 확인했습니다`, (v.documents && v.documents.title) || '', v.doc_id));
+        mine.data.filter(d => st.status[d.id] === 'pending' && d.status !== 'pending')
+          .forEach(d => notify(d.status === 'approved' ? `🎉 최종 컨펌완료: ${d.title}` : `↩️ 반려: ${d.title}`, '', d.id));
+      }
+      const next = [since, ...cm.data.map(c => c.created_at), ...vw.data.map(v => v.first_viewed_at)]
+        .reduce((a, b) => (new Date(b) > new Date(a) ? b : a));
+      try { localStorage.setItem(WATCH_ACT, JSON.stringify({ user: me.id, since: next, status })); } catch {}
+    }
     const safeCheck = () => {
       check().catch(e => console.warn('알림 확인 실패', e));
+      checkActivity().catch(e => console.warn('코멘트·열람 확인 실패', e));
       checkEvents().catch(e => console.warn('일정 확인 실패', e));
       checkV3().catch(e => console.warn('업무·공지 확인 실패', e));
     };
