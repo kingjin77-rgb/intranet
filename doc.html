@@ -14,10 +14,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=3.3.0">
+<link rel="stylesheet" href="style.css?v=3.3.1">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=3.3.0"></script>
-<script src="app.js?v=3.3.0"></script>
+<script src="config.js?v=3.3.1"></script>
+<script src="app.js?v=3.3.1"></script>
 </head>
 <body>
 <main class="container">
@@ -348,8 +348,9 @@
   const EMOJIS = '😀 😂 🤣 😊 😍 🥰 😎 🤔 😅 😭 😡 😱 🥲 🙄 😴 🤝 👍 👎 👏 🙏 💪 👌 ✌️ 🙌 🔥 💯 ✅ ❌ ⚠️ ❗ ❓ 💡 📌 📎 📅 ⏰ 💰 📄 ⚖️ 🎉 ❤️ 💙 👀 ✍️ 🚀 ☕'.split(' ');
   const MAX_FILES = 5, MAX_FILE = 50 * 1024 * 1024;
   // 005 SQL 을 실행하기 전이면 첨부·반응은 숨기고 이모지 넣기만 쓴다
-  const hasV33 = sb.from('comment_reactions').select('comment_id', { head: true, count: 'exact' }).limit(1)
-    .then(r => !r.error, () => false);
+  // HEAD 요청은 테이블이 없어도 오류가 안 잡히는 경우가 있어 GET 으로 확인한다
+  const hasV33 = sb.from('comment_reactions').select('comment_id').limit(1)
+    .then(r => !r.error && Array.isArray(r.data), () => false);
   let reactT, pending = [], groupDocs = null;
 
   const AVATAR_COLORS = ['#1a4f8a', '#e8821a', '#15803d', '#7c3aed', '#be185d', '#0e7490', '#b45309', '#4d7c0f'];
