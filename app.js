@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '3.1.0';
+  const APP_VERSION = '3.2.0';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -444,7 +444,7 @@
   }
 
   function tipDismissed() {
-    try { return localStorage.getItem('intranet_install_tip') === 'off'; } catch { return false; }
+    try { return localStorage.getItem('intranet_install_tip2') === 'off'; } catch { return false; }
   }
 
   function showInstallTip(text, onInstall) {
@@ -461,7 +461,7 @@
         if (act === 'install') await onInstall();
         if (act === 'install' || act === 'close') {
           el.remove();
-          try { localStorage.setItem('intranet_install_tip', 'off'); } catch {}
+          try { localStorage.setItem('intranet_install_tip2', 'off'); } catch {}
         }
       };
       document.body.appendChild(el);
@@ -481,11 +481,9 @@
   // 카톡 안 브라우저나 아이폰 사파리는 설치 버튼이 없어서 방법을 안내
   if (!isStandalone) {
     if (isInApp && (isIOS || isAndroid)) {
-      showInstallTip(isIOS
-        ? '앱으로 설치하려면 오른쪽 아래 <b>⋯ → Safari로 열기</b> 후 설치하세요.'
-        : '앱으로 설치하려면 오른쪽 위 <b>⋮ → 다른 브라우저로 열기</b>(크롬) 후 설치하세요.');
-    } else if (isIOS) {
-      showInstallTip('앱으로 설치: 아래 <b>공유 버튼(⬆︎) → 홈 화면에 추가</b>');
+      showInstallTip('<a href="install.html"><b>📲 휴대폰 앱으로 설치하기</b></a><br>카톡에서는 설치가 안 돼요. 눌러서 안내대로 하세요.');
+    } else if (isIOS || isAndroid) {
+      showInstallTip('<a href="install.html"><b>📲 휴대폰 앱으로 설치하기</b></a><br>홈 화면 아이콘으로 열고 알림도 받아요.');
     }
   }
 
