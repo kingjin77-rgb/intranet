@@ -14,10 +14,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=2.0.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js"></script>
-<script src="app.js"></script>
+<script src="config.js?v=2.0.0"></script>
+<script src="app.js?v=2.0.0"></script>
 </head>
 <body>
 <main class="container">
@@ -30,6 +30,7 @@
       <div style="flex:1;min-width:0">
         <div class="page-title" id="title">불러오는 중…</div>
         <p class="muted" id="meta"></p>
+        <p class="muted" id="caseLink" hidden></p>
       </div>
       <span id="status"></span>
     </div>
@@ -38,8 +39,10 @@
       <button class="btn" id="shareBtn">🔗 카톡 공유용 링크 복사</button>
       <a class="btn ghost" id="openBtn" target="_blank" rel="noopener">새 창에서 열기</a>
       <a class="btn ghost" id="downloadBtn">다운로드</a>
+      <a class="btn ghost" id="resubmitBtn" hidden>📝 수정본 올리기</a>
       <button class="btn ghost" id="deleteBtn" hidden style="color:var(--bad)">삭제</button>
     </div>
+    <div class="notice" id="rejectedNotice" hidden></div>
   </div>
 
   <div class="detail-grid">
@@ -58,6 +61,10 @@
     </div>
 
     <div>
+      <div class="card" id="versionsCard" hidden>
+        <h2>🗂 버전</h2>
+        <ul class="people" id="versions"></ul>
+      </div>
       <div class="card" id="approvalCard" hidden>
         <h2>✍️ 컨펌</h2>
         <ul class="steps" id="steps"></ul>
@@ -112,109 +119,131 @@
 
   // ----- 문서 정보 + 뷰어 -----
   document.getElementById('title').textContent = doc.title;
-  document.getElementById('meta').textContent = `${nameOf[doc.uploader_id] || ''} · ${fmtDate(doc.created_at)} · ${doc.file_name} ${fmtSize(doc.file_size)}`;
+  document.getElementById('meta').textContent = doc.kind === 'form'
+    ? `${nameOf[doc.uploader_id] || ''} · ${fmtDate(doc.created_at)} · 📝 ${(doc.form && doc.form.type) || '양식'}${doc.version > 1 ? ` · v${doc.version}` : ''}`
+    : `${nameOf[doc.uploader_id] || ''} · ${fmtDate(doc.created_at)} · ${doc.file_name} ${fmtSize(doc.file_size)}${doc.version > 1 ? ` · v${doc.version}` : ''}`;
   document.getElementById('desc').textContent = doc.description || '';
 
-  const [view, dl] = await Promise.all([
-    sb.storage.from('docs').createSignedUrl(doc.file_path, 3600),
-    sb.storage.from('docs').createSignedUrl(doc.file_path, 3600, { download: doc.file_name }),
-  ]);
-  const viewUrl = view.data && view.data.signedUrl;
   const openBtn = document.getElementById('openBtn');
-  openBtn.href = viewUrl || '#';
-  document.getElementById('downloadBtn').href = (dl.data && dl.data.signedUrl) || '#';
-
-  const lower = doc.file_name.toLowerCase();
   const viewer = document.getElementById('viewerCard');
-  const noPreview = (msg) => {
+  if (doc.kind === 'form') renderFormDoc(); else await renderFile();
+
+  // 양식(기안서·지급품의서·출장신청서)은 파일 대신 내용 카드로 보여준다
+  function renderFormDoc() {
     openBtn.hidden = true;
-    viewer.innerHTML = `<div class="file-box"><span class="icon">${fileIcon(doc.file_type, doc.file_name)}</span>
-      <div><div class="name">${esc(doc.file_name)}</div>
-      <p class="muted">${msg} 위의 <b>다운로드</b>를 눌러 확인하세요. (PDF로 올리면 바로 볼 수 있어요)</p></div></div>`;
-  };
-  if (viewUrl && (doc.file_type === 'application/pdf' || lower.endsWith('.pdf'))) {
-    viewer.innerHTML = `<iframe class="viewer" src="${esc(viewUrl)}" title="${esc(doc.title)}"></iframe>
-      <p class="muted" style="margin-top:6px">휴대폰에서 안 보이면 위의 <b>새 창에서 열기</b>를 누르세요.</p>`;
-  } else if (viewUrl && (doc.file_type || '').startsWith('image/')) {
-    viewer.innerHTML = `<img src="${esc(viewUrl)}" alt="${esc(doc.title)}" style="max-width:100%;border-radius:10px">`;
-  } else if (viewUrl && /\.(docx|xlsx)$/.test(lower)) {
-    // 워드·엑셀은 이 브라우저 안에서 직접 그린다 (파일이 외부 서버로 나가지 않음)
-    openBtn.hidden = true;
-    viewer.innerHTML = '<p class="muted">미리보기 준비 중…</p>';
-    renderOffice(lower.endsWith('.docx') ? 'docx' : 'xlsx', viewUrl).catch((e) => {
-      console.warn(e);
-      noPreview('미리보기를 만들지 못했습니다.');
-    });
-  } else {
-    noPreview('이 형식은 미리보기가 안 됩니다.');
+    document.getElementById('downloadBtn').hidden = true;
+    const f = doc.form || {};
+    const rows = [['양식', f.type]];
+    if (f.type === '지급품의서') rows.push(['금액', f.amount && App.fmtWon(f.amount)], ['지급처', f.payee], ['지급 예정일', f.pay_date]);
+    if (f.type === '출장신청서') rows.push(['출장지', f.place], ['기간', [f.from, f.to].filter(Boolean).join(' ~ ')], ['예상 경비', f.amount && App.fmtWon(f.amount)]);
+    viewer.innerHTML = `<div class="form-doc">
+      <div class="form-doc-title">${esc(f.type || '양식')}</div>
+      <table class="kv">${rows.filter(r => r[1]).map(r => `<tr><th>${esc(r[0])}</th><td>${esc(r[1])}</td></tr>`).join('')}</table>
+      <div class="form-doc-body">${esc(f.content || '')}</div>
+    </div>`;
   }
 
-  async function renderOffice(kind, url) {
-    const CDN = 'https://cdn.jsdelivr.net/npm/';
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('파일을 받지 못했습니다');
-    const data = await res.arrayBuffer();
-    if (kind === 'docx') {
-      await App.loadScript(CDN + 'jszip@3.10.2/dist/jszip.min.js');
-      await App.loadScript(CDN + 'docx-preview@0.4.1/dist/docx-preview.min.js');
-      viewer.innerHTML = `<div class="btn-row" style="margin:0 0 8px"><button class="btn ghost sm" id="zoomBtn">🔍 크게 보기</button></div>
-        <div class="office-view docx-view"></div>`;
-      const box = viewer.querySelector('.docx-view');
-      let actual = false;
-      await window.docx.renderAsync(data, box, null, { inWrapper: true, ignoreLastRenderedPageBreak: true });
-      // A4 페이지가 상자보다 넓으면 상자 폭에 맞춰 줄인다 (휴대폰 포함)
-      const fit = () => {
-        const wrap = box.querySelector('.docx-wrapper'), page = box.querySelector('section.docx');
-        if (!wrap || !page) return;
-        wrap.style.zoom = '';
-        if (!actual) wrap.style.zoom = Math.min(1, (box.clientWidth - 8) / (page.offsetWidth + 24));
-      };
-      fit();
-      document.getElementById('zoomBtn').onclick = (e) => {
-        actual = !actual;
-        e.target.textContent = actual ? '↔ 화면에 맞추기' : '🔍 크게 보기';
-        fit();
-      };
-      window.addEventListener('resize', fit);
-      return;
+  async function renderFile() {
+    const [view, dl] = await Promise.all([
+      sb.storage.from('docs').createSignedUrl(doc.file_path, 3600),
+      sb.storage.from('docs').createSignedUrl(doc.file_path, 3600, { download: doc.file_name }),
+    ]);
+    const viewUrl = view.data && view.data.signedUrl;
+    openBtn.href = viewUrl || '#';
+    document.getElementById('downloadBtn').href = (dl.data && dl.data.signedUrl) || '#';
+
+    const lower = doc.file_name.toLowerCase();
+    const noPreview = (msg) => {
+      openBtn.hidden = true;
+      viewer.innerHTML = `<div class="file-box"><span class="icon">${fileIcon(doc.file_type, doc.file_name)}</span>
+        <div><div class="name">${esc(doc.file_name)}</div>
+        <p class="muted">${msg} 위의 <b>다운로드</b>를 눌러 확인하세요. (PDF로 올리면 바로 볼 수 있어요)</p></div></div>`;
+    };
+    if (viewUrl && (doc.file_type === 'application/pdf' || lower.endsWith('.pdf'))) {
+      viewer.innerHTML = `<iframe class="viewer" src="${esc(viewUrl)}" title="${esc(doc.title)}"></iframe>
+        <p class="muted" style="margin-top:6px">휴대폰에서 안 보이면 위의 <b>새 창에서 열기</b>를 누르세요.</p>`;
+    } else if (viewUrl && (doc.file_type || '').startsWith('image/')) {
+      viewer.innerHTML = `<img src="${esc(viewUrl)}" alt="${esc(doc.title)}" style="max-width:100%;border-radius:10px">`;
+    } else if (viewUrl && /\.(docx|xlsx)$/.test(lower)) {
+      // 워드·엑셀은 이 브라우저 안에서 직접 그린다 (파일이 외부 서버로 나가지 않음)
+      openBtn.hidden = true;
+      viewer.innerHTML = '<p class="muted">미리보기 준비 중…</p>';
+      renderOffice(lower.endsWith('.docx') ? 'docx' : 'xlsx', viewUrl).catch((e) => {
+        console.warn(e);
+        noPreview('미리보기를 만들지 못했습니다.');
+      });
+    } else {
+      noPreview('이 형식은 미리보기가 안 됩니다.');
     }
-    await App.loadScript(CDN + 'exceljs@4.4.0/dist/exceljs.min.js');
-    const wb = new window.ExcelJS.Workbook();
-    await wb.xlsx.load(data);
-    const sheets = wb.worksheets.filter(ws => ws.state !== 'hidden' && ws.state !== 'veryHidden');
-    if (!sheets.length) throw new Error('빈 통합문서');
-    const MAX_ROWS = 500, MAX_COLS = 50;
-    const table = (ws) => {
-      const rows = Math.min(ws.rowCount, MAX_ROWS), cols = Math.min(ws.columnCount, MAX_COLS);
-      let html = '<table class="sheet"><tbody>';
-      for (let r = 1; r <= rows; r++) {
-        const row = ws.getRow(r);
-        html += '<tr><th>' + r + '</th>';
-        for (let c = 1; c <= cols; c++) {
-          const cell = row.getCell(c);
-          // 병합된 칸은 첫 칸에만 값을 보여준다
-          let text = cell.isMerged && cell.master !== cell ? '' : cell.text;
-          if (!text && cell.formula) text = '=' + cell.formula;  // 계산값이 저장 안 된 수식
-          html += `<td>${esc(text)}</td>`;
+
+    async function renderOffice(kind, url) {
+      const CDN = 'https://cdn.jsdelivr.net/npm/';
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('파일을 받지 못했습니다');
+      const data = await res.arrayBuffer();
+      if (kind === 'docx') {
+        await App.loadScript(CDN + 'jszip@3.10.2/dist/jszip.min.js');
+        await App.loadScript(CDN + 'docx-preview@0.4.1/dist/docx-preview.min.js');
+        viewer.innerHTML = `<div class="btn-row" style="margin:0 0 8px"><button class="btn ghost sm" id="zoomBtn">🔍 크게 보기</button></div>
+          <div class="office-view docx-view"></div>`;
+        const box = viewer.querySelector('.docx-view');
+        let actual = false;
+        await window.docx.renderAsync(data, box, null, { inWrapper: true, ignoreLastRenderedPageBreak: true });
+        // A4 페이지가 상자보다 넓으면 상자 폭에 맞춰 줄인다 (휴대폰 포함)
+        const fit = () => {
+          const wrap = box.querySelector('.docx-wrapper'), page = box.querySelector('section.docx');
+          if (!wrap || !page) return;
+          wrap.style.zoom = '';
+          if (!actual) wrap.style.zoom = Math.min(1, (box.clientWidth - 8) / (page.offsetWidth + 24));
+        };
+        fit();
+        document.getElementById('zoomBtn').onclick = (e) => {
+          actual = !actual;
+          e.target.textContent = actual ? '↔ 화면에 맞추기' : '🔍 크게 보기';
+          fit();
+        };
+        window.addEventListener('resize', fit);
+        return;
+      }
+      await App.loadScript(CDN + 'exceljs@4.4.0/dist/exceljs.min.js');
+      const wb = new window.ExcelJS.Workbook();
+      await wb.xlsx.load(data);
+      const sheets = wb.worksheets.filter(ws => ws.state !== 'hidden' && ws.state !== 'veryHidden');
+      if (!sheets.length) throw new Error('빈 통합문서');
+      const MAX_ROWS = 500, MAX_COLS = 50;
+      const table = (ws) => {
+        const rows = Math.min(ws.rowCount, MAX_ROWS), cols = Math.min(ws.columnCount, MAX_COLS);
+        let html = '<table class="sheet"><tbody>';
+        for (let r = 1; r <= rows; r++) {
+          const row = ws.getRow(r);
+          html += '<tr><th>' + r + '</th>';
+          for (let c = 1; c <= cols; c++) {
+            const cell = row.getCell(c);
+            // 병합된 칸은 첫 칸에만 값을 보여준다
+            let text = cell.isMerged && cell.master !== cell ? '' : cell.text;
+            if (!text && cell.formula) text = '=' + cell.formula;  // 계산값이 저장 안 된 수식
+            html += `<td>${esc(text)}</td>`;
+          }
+          html += '</tr>';
         }
-        html += '</tr>';
-      }
-      html += '</tbody></table>';
-      if (ws.rowCount > MAX_ROWS || ws.columnCount > MAX_COLS) {
-        html += `<p class="muted" style="margin-top:6px">앞부분(${MAX_ROWS}행·${MAX_COLS}열)만 보여줍니다. 전체는 다운로드해서 보세요.</p>`;
-      }
-      return html;
-    };
-    viewer.innerHTML = `${sheets.length > 1 ? `<div class="tabs sheet-tabs">${sheets.map((ws, i) =>
-        `<button class="tab${i ? '' : ' active'}" data-i="${i}">${esc(ws.name)}</button>`).join('')}</div>` : ''}
-      <div class="office-view sheet-view">${table(sheets[0])}</div>`;
-    const tabs = viewer.querySelector('.sheet-tabs');
-    if (tabs) tabs.onclick = (e) => {
-      const b = e.target.closest('.tab');
-      if (!b) return;
-      tabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === b));
-      viewer.querySelector('.sheet-view').innerHTML = table(sheets[+b.dataset.i]);
-    };
+        html += '</tbody></table>';
+        if (ws.rowCount > MAX_ROWS || ws.columnCount > MAX_COLS) {
+          html += `<p class="muted" style="margin-top:6px">앞부분(${MAX_ROWS}행·${MAX_COLS}열)만 보여줍니다. 전체는 다운로드해서 보세요.</p>`;
+        }
+        return html;
+      };
+      viewer.innerHTML = `${sheets.length > 1 ? `<div class="tabs sheet-tabs">${sheets.map((ws, i) =>
+          `<button class="tab${i ? '' : ' active'}" data-i="${i}">${esc(ws.name)}</button>`).join('')}</div>` : ''}
+        <div class="office-view sheet-view">${table(sheets[0])}</div>`;
+      const tabs = viewer.querySelector('.sheet-tabs');
+      if (tabs) tabs.onclick = (e) => {
+        const b = e.target.closest('.tab');
+        if (!b) return;
+        tabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === b));
+        viewer.querySelector('.sheet-view').innerHTML = table(sheets[+b.dataset.i]);
+      };
+    }
+
   }
 
   if (doc.uploader_id === me.id || me.role === 'admin') {
@@ -222,7 +251,7 @@
     del.hidden = false;
     del.onclick = async () => {
       if (!confirm('이 문서와 코멘트·컨펌 기록을 모두 삭제할까요?')) return;
-      await sb.storage.from('docs').remove([doc.file_path]);
+      if (doc.file_path) await sb.storage.from('docs').remove([doc.file_path]);
       const { error } = await sb.from('documents').delete().eq('id', docId);
       if (error) return toast(errMsg(error), true);
       location.replace('index.html');
@@ -340,7 +369,50 @@
     loadComments();
   };
 
+  // ----- 사건 · 버전 · 재상신 (v2) -----
+  async function loadVersions() {
+    if (!doc.group_id) return;  // v2 DB 업데이트 전
+    if (doc.case_id) {
+      const { data: c } = await sb.from('cases').select('id,name').eq('id', doc.case_id).maybeSingle();
+      if (c) {
+        const el = document.getElementById('caseLink');
+        el.innerHTML = `⚖️ 사건: <a href="case.html?id=${encodeURIComponent(c.id)}">${esc(c.name)}</a>`;
+        el.hidden = false;
+      }
+    }
+    const { data: vers } = await sb.from('documents').select('id,version,status,created_at,uploader_id').eq('group_id', doc.group_id).order('version');
+    const list = vers || [];
+    const latest = list.length ? list[list.length - 1] : doc;
+    if (list.length > 1) {
+      document.getElementById('versionsCard').hidden = false;
+      document.getElementById('versions').innerHTML = list.map(v => `
+        <li${v.id === doc.id ? ' class="cur"' : ''}>
+          <span>${v.id === doc.id ? `<b>v${v.version} (지금 보는 버전)</b>` : `<a href="doc.html?id=${encodeURIComponent(v.id)}">v${v.version}</a>`}
+            ${statusBadge(v.status)}</span>
+          <span class="when">${esc(nameOf[v.uploader_id] || '')} · ${fmtDate(v.created_at)}</span>
+        </li>`).join('');
+    }
+    if (latest.id !== doc.id) {
+      const n = document.getElementById('rejectedNotice');
+      n.hidden = false;
+      n.innerHTML = `이 문서는 예전 버전(v${doc.version})입니다. <a href="doc.html?id=${encodeURIComponent(latest.id)}"><b>최신 v${latest.version} 보기 →</b></a>`;
+      return;
+    }
+    if (doc.uploader_id === me.id || me.role === 'admin') {
+      const btn = document.getElementById('resubmitBtn');
+      btn.href = `upload.html?prev=${encodeURIComponent(doc.id)}`;
+      btn.hidden = false;
+      if (doc.status === 'rejected') {
+        btn.className = 'btn';
+        const n = document.getElementById('rejectedNotice');
+        n.hidden = false;
+        n.innerHTML = '반려된 문서입니다. 의견을 반영해 <b>📝 수정본 올리기</b>로 다시 컨펌을 요청하세요. 이전 버전과 코멘트는 그대로 남습니다.';
+      }
+    }
+  }
+
   await Promise.all([loadSteps(), loadViews(), loadComments()]);
+  loadVersions().catch(e => console.warn(e));
 
   // 다른 사람의 코멘트·열람·컨펌를 실시간 반영
   const filter = `doc_id=eq.${docId}`;

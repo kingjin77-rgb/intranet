@@ -14,10 +14,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=2.0.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js"></script>
-<script src="app.js"></script>
+<script src="config.js?v=2.0.0"></script>
+<script src="app.js?v=2.0.0"></script>
 </head>
 <body>
 <main class="container">
@@ -35,7 +35,10 @@
     <button class="tab" data-tab="unread">안 읽은 문서 <span id="unreadCount"></span></button>
     <button class="tab" data-tab="mine">내가 올린 문서</button>
   </div>
-  <input type="text" id="search" placeholder="제목·올린 사람 검색" style="margin-bottom:12px">
+  <div class="filter-row">
+    <input type="text" id="search" placeholder="제목·올린 사람·사건 검색">
+    <select id="caseFilter" hidden><option value="">전체 사건</option></select>
+  </div>
 
   <div class="doc-list" id="list"><div class="empty">불러오는 중…</div></div>
 </main>
@@ -54,7 +57,8 @@
     ]);
     const err = d.error || v.error || m.error;
     if (err) return toast(errMsg(err), true);
-    docs = d.data;
+    // 수정본이 있으면 최신본만 목록에 (v2 DB 전이면 is_latest 가 없어서 전부 보임)
+    docs = d.data.filter(x => x.is_latest !== false);
     seen = new Set(v.data.map(r => r.doc_id));
     memberCount = m.count || 0;
     render();
@@ -68,7 +72,9 @@
     document.getElementById('unreadCount').textContent = unread.length ? `(${unread.length})` : '';
 
     let rows = { all: docs, myturn, unread, mine: docs.filter(x => x.uploader_id === me.id) }[tab];
-    if (q) rows = rows.filter(x => x.title.toLowerCase().includes(q) || (x.uploader_name || '').toLowerCase().includes(q));
+    if (q) rows = rows.filter(x => [x.title, x.uploader_name, x.case_name].some(v => (v || '').toLowerCase().includes(q)));
+    const cf = document.getElementById('caseFilter').value;
+    if (cf) rows = rows.filter(x => x.case_id === cf);
 
     const list = document.getElementById('list');
     if (!rows.length) {
@@ -78,13 +84,15 @@
     list.innerHTML = rows.map(x => `
       <a class="doc-item" href="doc.html?id=${encodeURIComponent(x.id)}">
         <div class="row1">
-          <span>${fileIcon(x.file_type, x.file_name)}</span>
+          <span>${x.kind === 'form' ? '📝' : fileIcon(x.file_type, x.file_name)}</span>
           <span class="title">${esc(x.title)}</span>
+          ${x.version > 1 ? `<span class="badge none">v${x.version}</span>` : ''}
           ${x.current_approver_id === me.id ? '<span class="badge myturn">내 차례</span>' : ''}
           ${!seen.has(x.id) && x.uploader_id !== me.id ? '<span class="badge pending">NEW</span>' : ''}
           ${statusBadge(x.status)}
         </div>
         <div class="meta">
+          ${x.case_name ? `<span>⚖️ ${esc(x.case_name)}</span>` : ''}
           <span>${esc(x.uploader_name)} · ${fmtDate(x.created_at)}</span>
           <span>👀 열람 ${x.view_count}/${memberCount}명</span>
           <span>💬 ${x.comment_count}</span>
@@ -100,11 +108,19 @@
     render();
   };
   document.getElementById('search').oninput = render;
+  document.getElementById('caseFilter').onchange = render;
+  App.hasV2().then(async (ok) => {
+    if (!ok) return;
+    const cases = await App.loadCases(true).catch(() => []);
+    const sel = document.getElementById('caseFilter');
+    sel.innerHTML += cases.map(c => `<option value="${c.id}">${esc(c.name)}${c.status === 'closed' ? ' (종결)' : ''}</option>`).join('');
+    sel.hidden = !cases.length;
+  });
 
   if (new URLSearchParams(location.search).get('tab') === 'myturn') document.querySelector('[data-tab=myturn]').click();
   await load();
 
-  // 다른 사람이 문서를 올리거나 컨펌가 진행되면 목록 갱신
+  // 다른 사람이 문서를 올리거나 컨펌이 진행되면 목록 갱신
   let t;
   sb.channel('list')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'documents' }, () => { clearTimeout(t); t = setTimeout(load, 500); })

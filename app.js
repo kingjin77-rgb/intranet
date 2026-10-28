@@ -5,6 +5,9 @@
 
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
+  // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
+  const APP_VERSION = '2.0.0';
+
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
   function esc(s) {
@@ -47,6 +50,9 @@
   // Supabase 오류 메시지를 사용자용 문장으로
   function errMsg(e) {
     const m = (e && (e.message || e.error_description)) || String(e);
+    if (m.includes('Invalid login credentials')) return '이메일 또는 비밀번호가 맞지 않습니다. 비밀번호를 정하지 않았다면 [이메일 코드]로 로그인하세요.';
+    if (m.includes('Password should be') || m.includes('weak')) return '비밀번호는 8자 이상으로 정해 주세요.';
+    if (m.includes('same as the old')) return '기존 비밀번호와 다르게 정해 주세요.';
     if (m.includes('Database error saving new user') || m.includes('초대되지 않은')) return '초대되지 않은 이메일입니다. 관리자에게 등록을 요청하세요.';
     if (m.includes('Token has expired') || m.includes('invalid')) return '인증 코드가 올바르지 않거나 만료되었습니다.';
     if (m.includes('rate limit')) return '요청이 너무 많습니다. 잠시 후 다시 시도하세요.';
@@ -86,10 +92,13 @@
         <a class="brand" href="index.html">📁 ${esc(cfg.COMPANY_NAME || '')} 인트라넷</a>
         <nav>
           <a href="index.html">문서함</a>
+          <a href="cases.html">사건</a>
+          <a href="calendar.html">일정</a>
           <a href="upload.html">＋ 올리기</a>
           ${profile && profile.role === 'admin' ? '<a href="admin.html">직원관리</a>' : ''}
+          <a href="help.html" title="PC·휴대폰 설치 안내">❓ 설치</a>
           ${profile && 'Notification' in window && Notification.permission === 'default' ? '<button id="notifyBtn">🔔 알림 켜기</button>' : ''}
-          ${profile ? `<span class="me">${esc(profile.name)}</span><button id="logoutBtn">로그아웃</button>` : ''}
+          ${profile ? `<button id="meBtn" title="비밀번호 설정">👤 ${esc(profile.name)}</button><button id="logoutBtn">로그아웃</button>` : ''}
         </nav>
       </div>`;
     document.body.prepend(header);
@@ -99,6 +108,8 @@
       await sb.auth.signOut();
       location.href = 'login.html';
     };
+    const mb = header.querySelector('#meBtn');
+    if (mb) mb.onclick = () => openPasswordDialog();
     const nb = header.querySelector('#notifyBtn');
     if (nb) nb.onclick = async () => {
       const r = await Notification.requestPermission();
@@ -109,10 +120,55 @@
 
   // ----- 새 문서·내 컨펌 차례 알림 (창이 열려 있는 동안 1분마다 확인) -----
   const WATCH_KEY = 'intranet_watch';
-  function notify(title, body, docId) {
+  function notify(title, body, docId, url) {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
     const n = new Notification(title, { body, icon: 'icons/icon-192.png', tag: `${title}-${docId}` });
-    n.onclick = () => { window.focus(); location.href = `doc.html?id=${encodeURIComponent(docId)}`; n.close(); };
+    n.onclick = () => { window.focus(); location.href = url || `doc.html?id=${encodeURIComponent(docId)}`; n.close(); };
+  }
+
+  // 오늘·내일 기일은 하루에 한 번씩 알린다
+  async function checkEvents() {
+    if (!(await hasV2())) return;
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+    const end = new Date(start); end.setDate(end.getDate() + 2);
+    const { data, error } = await sb.from('events').select('id,title,starts_at,all_day,kind,location').gte('starts_at', start.toISOString()).lt('starts_at', end.toISOString());
+    if (error || !data) return;
+    const todayKey = start.toISOString().slice(0, 10);
+    let done = [];
+    try { done = JSON.parse(localStorage.getItem('intranet_ev_notified') || '[]'); } catch {}
+    done = done.filter(k => k.endsWith(todayKey));
+    data.forEach(e => {
+      const key = `${e.id}:${todayKey}`;
+      if (done.includes(key)) return;
+      const d = new Date(e.starts_at);
+      const isToday = d.toDateString() === new Date().toDateString();
+      const when = e.all_day ? '종일' : d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+      notify(`📅 ${isToday ? '오늘' : '내일'} ${EVENT_KIND[e.kind] || '일정'}: ${e.title}`, [when, e.location].filter(Boolean).join(' · '), e.id, 'calendar.html');
+      done.push(key);
+    });
+    try { localStorage.setItem('intranet_ev_notified', JSON.stringify(done)); } catch {}
+  }
+
+  // 새 버전이 배포되면 위쪽에 안내 띠를 띄운다 (옛 화면을 계속 쓰는 걸 막기 위해)
+  async function checkVersion() {
+    try {
+      const res = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const { version } = await res.json();
+      if (!version || version === APP_VERSION || document.getElementById('updateBar')) return;
+      const bar = document.createElement('div');
+      bar.id = 'updateBar';
+      bar.innerHTML = `새 버전(${esc(version)})이 나왔습니다. <button type="button">지금 업데이트</button>`;
+      bar.querySelector('button').onclick = async () => {
+        try {
+          if (window.caches) await Promise.all((await caches.keys()).map(k => caches.delete(k)));
+          const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+          if (reg) await reg.update();
+        } catch {}
+        location.reload();
+      };
+      document.body.prepend(bar);
+    } catch {}
   }
 
   function startWatch(me) {
@@ -142,10 +198,15 @@
       // 크롬 확장프로그램이 있으면 툴바 아이콘에도 숫자를 표시
       window.postMessage({ type: 'intranet-badge', count: stepIds.length }, location.origin);
     }
-    const safeCheck = () => check().catch(e => console.warn('알림 확인 실패', e));
+    const safeCheck = () => {
+      check().catch(e => console.warn('알림 확인 실패', e));
+      checkEvents().catch(e => console.warn('일정 확인 실패', e));
+    };
     safeCheck();
     setInterval(safeCheck, 60 * 1000);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) safeCheck(); });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { safeCheck(); checkVersion(); } });
+    checkVersion();
+    setInterval(checkVersion, 5 * 60 * 1000);
   }
 
   function showFatal(html) {
@@ -175,6 +236,12 @@
     }
     renderHeader(profile);
     startWatch(profile);
+    try {
+      if (localStorage.getItem('intranet_pw_prompt') === 'pending') {
+        localStorage.removeItem('intranet_pw_prompt');
+        openPasswordDialog('로그인 완료! 비밀번호를 정해 두면 <b>다음부터는 메일 확인 없이</b> 이메일 + 비밀번호로 바로 들어옵니다.');
+      }
+    } catch {}
     return profile;
   }
 
@@ -182,6 +249,66 @@
     const { data, error } = await sb.from('profiles').select('id,name,dept,role,active').eq('active', true).order('name');
     if (error) throw error;
     return data;
+  }
+
+  // ----- 비밀번호 설정 -----
+  function openPasswordDialog(intro) {
+    if (document.getElementById('pwDialog')) return;
+    const wrap = document.createElement('div');
+    wrap.id = 'pwDialog';
+    wrap.className = 'modal-back';
+    wrap.innerHTML = `
+      <form class="card modal">
+        <h2>🔑 비밀번호 설정</h2>
+        <p class="muted">${intro || '비밀번호를 정해 두면 다음부터 메일 확인 없이 <b>이메일 + 비밀번호</b>로 바로 로그인합니다.'}</p>
+        <label for="pw1">새 비밀번호 (8자 이상)</label>
+        <input type="password" id="pw1" minlength="8" autocomplete="new-password" required>
+        <label for="pw2">한 번 더</label>
+        <input type="password" id="pw2" minlength="8" autocomplete="new-password" required>
+        <div class="btn-row">
+          <button class="btn" type="submit" style="flex:1">저장</button>
+          <button class="btn ghost" type="button" data-close>나중에</button>
+        </div>
+      </form>`;
+    const close = () => { wrap.remove(); try { localStorage.setItem('intranet_pw_prompted', '1'); } catch {} };
+    wrap.querySelector('[data-close]').onclick = close;
+    wrap.querySelector('form').onsubmit = async (e) => {
+      e.preventDefault();
+      const a = wrap.querySelector('#pw1').value, b = wrap.querySelector('#pw2').value;
+      if (a !== b) return toast('두 비밀번호가 다릅니다.', true);
+      const { error } = await sb.auth.updateUser({ password: a });
+      if (error) return toast(errMsg(error), true);
+      close();
+      toast('비밀번호를 저장했습니다. 다음부터 비밀번호로 로그인하세요.');
+    };
+    document.body.appendChild(wrap);
+    wrap.querySelector('#pw1').focus();
+  }
+
+  // ----- v2 (사건·일정·양식) DB 업데이트 여부 -----
+  let v2Promise;
+  function hasV2() {
+    if (!v2Promise) v2Promise = sb.from('cases').select('id', { count: 'exact', head: true })
+      .then(({ error }) => !error);
+    return v2Promise;
+  }
+  const V2_NOTICE = '<div class="notice">사건·일정·양식 기능을 쓰려면 DB 업데이트가 필요합니다. 관리자가 Supabase에서 <b>migrations/002_v2.sql</b>을 실행하면 바로 켜집니다.</div>';
+
+  async function loadCases(includeClosed) {
+    let q = sb.from('cases').select('id,name,client,case_no,status').order('created_at', { ascending: false });
+    if (!includeClosed) q = q.eq('status', 'open');
+    const { data, error } = await q;
+    if (error) throw error;
+    return data;
+  }
+
+  const EVENT_KIND = { hearing: '기일', deadline: '마감', meeting: '미팅', etc: '기타' };
+  function fmtWon(n) { return (Number(n) || 0).toLocaleString('ko-KR') + '원'; }
+  function dday(iso) {
+    const d = new Date(iso); d.setHours(0, 0, 0, 0);
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    const n = Math.round((d - t) / 86400000);
+    return n === 0 ? 'D-DAY' : n > 0 ? `D-${n}` : `D+${-n}`;
   }
 
   // 필요할 때만 외부 라이브러리를 불러온다 (같은 주소는 한 번만)
@@ -269,5 +396,5 @@
     (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
   }
 
-  window.App = { sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, STATUS_LABEL };
+  window.App = { sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
 })();

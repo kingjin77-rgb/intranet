@@ -12,27 +12,60 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=2.0.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js"></script>
-<script src="app.js"></script>
+<script src="config.js?v=2.0.0"></script>
+<script src="app.js?v=2.0.0"></script>
 </head>
 <body>
 <main class="container" style="max-width:640px">
-  <div class="page-title">문서 올리기</div>
-  <p class="muted" style="margin-bottom:16px">PDF로 올리면 휴대폰에서도 바로 볼 수 있습니다.</p>
+  <div class="page-title" id="pageTitle">문서 올리기</div>
+  <p class="muted" id="pageSub" style="margin-bottom:16px">PDF로 올리면 휴대폰에서도 바로 볼 수 있습니다.</p>
+  <div class="notice" id="prevNotice" hidden style="margin-bottom:12px"></div>
+
+  <div class="tabs" id="modeTabs" hidden>
+    <button class="tab active" type="button" data-mode="file">📄 파일 올리기</button>
+    <button class="tab" type="button" data-mode="form">📝 양식 작성 (기안·지출·출장)</button>
+  </div>
 
   <form class="card" id="form">
-    <label for="file">파일 (최대 50MB)</label>
-    <input type="file" id="file" required accept=".pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.hwp,.hwpx,.png,.jpg,.jpeg,.zip">
-    <p class="muted" style="margin-top:6px">✅ 바로 보기: PDF, 사진, 워드(.docx), 엑셀(.xlsx) &nbsp;·&nbsp; ⬇️ 다운로드해야 보임: PPT, 한글, ZIP, 옛날 형식(.doc·.xls)</p>
-    <div class="notice" id="previewNotice" hidden></div>
+    <div id="caseRow" hidden>
+      <label for="caseSelect">사건 (선택)</label>
+      <select id="caseSelect"><option value="">사건 없음</option></select>
+    </div>
+
+    <div id="fileSection">
+      <label for="file">파일 (최대 50MB)</label>
+      <input type="file" id="file" accept=".pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.hwp,.hwpx,.png,.jpg,.jpeg,.zip">
+      <p class="muted" style="margin-top:6px">✅ 바로 보기: PDF, 사진, 워드(.docx), 엑셀(.xlsx) &nbsp;·&nbsp; ⬇️ 다운로드해야 보임: PPT, 한글, ZIP, 옛날 형식(.doc·.xls)</p>
+      <div class="notice" id="previewNotice" hidden></div>
+    </div>
+
+    <div id="formSection" hidden>
+      <label for="formType">양식</label>
+      <select id="formType">
+        <option value="기안서">기안서 (일반 품의)</option>
+        <option value="지급품의서">지급품의서 (비용 지출)</option>
+        <option value="출장신청서">출장신청서</option>
+      </select>
+      <div class="grid2" data-for="지급품의서">
+        <div><label for="fAmount">금액 (원)</label><input type="text" id="fAmount" inputmode="numeric" placeholder="예) 350,000"></div>
+        <div><label for="fPayee">지급처</label><input type="text" id="fPayee" maxlength="100" placeholder="예) 서울중앙지법 (인지대)"></div>
+        <div><label for="fPayDate">지급 예정일</label><input type="date" id="fPayDate"></div>
+      </div>
+      <div class="grid2" data-for="출장신청서" hidden>
+        <div><label for="fPlace">출장지</label><input type="text" id="fPlace" maxlength="100" placeholder="예) 부산지방법원"></div>
+        <div><label for="fTripCost">예상 경비 (원, 선택)</label><input type="text" id="fTripCost" inputmode="numeric"></div>
+        <div><label for="fFrom">출발일</label><input type="date" id="fFrom"></div>
+        <div><label for="fTo">복귀일</label><input type="date" id="fTo"></div>
+      </div>
+    </div>
 
     <label for="title">제목</label>
-    <input type="text" id="title" required maxlength="200" placeholder="예) ○○건설 제안서 v2">
+    <input type="text" id="title" required maxlength="200" placeholder="예) ○○건설 제안서">
 
-    <label for="desc">설명 / 요청사항 (선택)</label>
-    <textarea id="desc" maxlength="2000" placeholder="예) 3페이지 단가표 확인 부탁드립니다. 금요일까지 컨펌 요청드립니다."></textarea>
+    <label for="desc" id="descLabel">설명 / 요청사항 (선택)</label>
+    <textarea id="desc" maxlength="4000" placeholder="예) 3페이지 단가표 확인 부탁드립니다. 금요일까지 컨펌 요청드립니다."></textarea>
 
     <label>컨펌 순서 (순서대로 컨펌합니다 · 비워두면 컨펌 없이 공유만)</label>
     <div style="display:flex;gap:8px">
@@ -43,7 +76,7 @@
 
     <div class="btn-row">
       <button class="btn" type="submit" id="submitBtn" style="flex:1">올리기</button>
-      <a class="btn ghost" href="index.html">취소</a>
+      <a class="btn ghost" href="index.html" id="cancelBtn">취소</a>
     </div>
     <p class="muted" id="progress" style="margin-top:8px"></p>
   </form>
@@ -53,6 +86,9 @@
   const { sb, esc, toast, errMsg } = App;
   const me = await App.requireAuth();
   const MAX = 50 * 1024 * 1024;
+  const params = new URLSearchParams(location.search);
+  const v2 = await App.hasV2();
+  let mode = 'file', prev = null;
 
   const members = (await App.loadMembers()).filter(m => m.id !== me.id);
   const byId = Object.fromEntries(members.map(m => [m.id, m]));
@@ -94,6 +130,78 @@
     renderPicker();
   };
 
+  // ----- 파일 / 양식 전환 -----
+  const formType = document.getElementById('formType');
+  function setMode(m) {
+    mode = m;
+    document.querySelectorAll('#modeTabs .tab').forEach(t => t.classList.toggle('active', t.dataset.mode === m));
+    document.getElementById('fileSection').hidden = m !== 'file';
+    document.getElementById('formSection').hidden = m !== 'form';
+    document.getElementById('descLabel').textContent = m === 'form' ? '내용 / 사유' : '설명 / 요청사항 (선택)';
+    document.getElementById('desc').required = m === 'form';
+    document.getElementById('pageSub').textContent = m === 'form'
+      ? '파일 없이 양식으로 컨펌을 받습니다. 컨펌완료된 지급품의서 금액은 사건별 비용에 합산됩니다.'
+      : 'PDF로 올리면 휴대폰에서도 바로 볼 수 있습니다.';
+  }
+  function showFormFields() {
+    document.querySelectorAll('[data-for]').forEach(el => (el.hidden = el.dataset.for !== formType.value));
+  }
+  document.getElementById('modeTabs').onclick = (e) => {
+    const b = e.target.closest('[data-mode]');
+    if (b && !prev) setMode(b.dataset.mode);
+  };
+  formType.onchange = showFormFields;
+  const digits = (v) => (v || '').replace(/[^0-9]/g, '');
+  ['fAmount', 'fTripCost'].forEach(id => {
+    const el = document.getElementById(id);
+    el.oninput = () => { const d = digits(el.value); el.value = d ? Number(d).toLocaleString('ko-KR') : ''; };
+  });
+
+  if (v2) {
+    document.getElementById('modeTabs').hidden = false;
+    document.getElementById('caseRow').hidden = false;
+    const cases = await App.loadCases(false).catch(() => []);
+    document.getElementById('caseSelect').innerHTML += cases.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    if (params.get('case')) document.getElementById('caseSelect').value = params.get('case');
+    if (params.get('mode') === 'form') setMode('form');
+  }
+
+  // ----- 수정본 올리기 (재상신) -----
+  if (v2 && params.get('prev')) {
+    const { data } = await sb.from('document_summary').select('*').eq('id', params.get('prev')).maybeSingle();
+    if (data) {
+      prev = data;
+      document.getElementById('pageTitle').textContent = `수정본 올리기 (v${(data.version || 1) + 1})`;
+      document.getElementById('prevNotice').hidden = false;
+      document.getElementById('prevNotice').innerHTML = `<b>${esc(data.title)}</b> (v${data.version || 1})의 수정본입니다. 이전 버전과 코멘트는 그대로 남고, 새 버전으로 다시 컨펌을 받습니다.`;
+      document.getElementById('title').value = data.title.replace(/\s*v\d+$/i, '');
+      if (data.case_id) {
+        const sel = document.getElementById('caseSelect');
+        if (![...sel.options].some(o => o.value === data.case_id)) sel.innerHTML += `<option value="${data.case_id}">${esc(data.case_name || '')}</option>`;
+        sel.value = data.case_id;
+      }
+      setMode(data.kind === 'form' ? 'form' : 'file');
+      document.querySelectorAll('#modeTabs .tab').forEach(t => (t.disabled = t.dataset.mode !== mode));
+      if (data.kind === 'form' && data.form) {
+        const f = data.form;
+        formType.value = f.type;
+        document.getElementById('desc').value = f.content || '';
+        if (f.amount) document.getElementById(f.type === '출장신청서' ? 'fTripCost' : 'fAmount').value = Number(f.amount).toLocaleString('ko-KR');
+        document.getElementById('fPayee').value = f.payee || '';
+        document.getElementById('fPayDate').value = f.pay_date || '';
+        document.getElementById('fPlace').value = f.place || '';
+        document.getElementById('fFrom').value = f.from || '';
+        document.getElementById('fTo').value = f.to || '';
+      }
+      const steps = await sb.from('approval_steps').select('approver_id,step_order').eq('doc_id', data.id).order('step_order');
+      (steps.data || []).forEach(s => { if (byId[s.approver_id]) approvers.push(s.approver_id); });
+      renderPicker();
+      document.getElementById('cancelBtn').href = `doc.html?id=${encodeURIComponent(data.id)}`;
+      document.getElementById('submitBtn').textContent = '수정본 올리기';
+    }
+  }
+  showFormFields();
+
   const fileInput = document.getElementById('file');
   // 미리보기가 안 되는 형식이면 올리기 전에 PDF 변환 방법을 안내
   const HOW_TO_PDF = {
@@ -121,14 +229,55 @@
     if (f && f.size > MAX) toast('50MB 이하 파일만 올릴 수 있습니다.', true);
   };
 
+  function collectForm() {
+    const type = formType.value;
+    const f = { type, content: document.getElementById('desc').value.trim() };
+    if (type === '지급품의서') {
+      f.amount = digits(document.getElementById('fAmount').value);
+      f.payee = document.getElementById('fPayee').value.trim();
+      f.pay_date = document.getElementById('fPayDate').value;
+      if (!f.amount) throw new Error('지급 금액을 입력해 주세요');
+    } else if (type === '출장신청서') {
+      f.place = document.getElementById('fPlace').value.trim();
+      f.from = document.getElementById('fFrom').value;
+      f.to = document.getElementById('fTo').value;
+      const cost = digits(document.getElementById('fTripCost').value);
+      if (cost) f.amount = cost;
+      if (!f.place || !f.from) throw new Error('출장지와 출발일을 입력해 주세요');
+    }
+    return f;
+  }
+
   document.getElementById('form').onsubmit = async (e) => {
     e.preventDefault();
-    const f = fileInput.files[0];
-    if (!f) return;
-    if (f.size > MAX) return toast('50MB 이하 파일만 올릴 수 있습니다.', true);
-
     const btn = document.getElementById('submitBtn');
     const progress = document.getElementById('progress');
+    const common = {
+      p_title: document.getElementById('title').value,
+      p_description: mode === 'form' ? '' : document.getElementById('desc').value,
+      p_approvers: approvers,
+    };
+    const extra = v2 ? {
+      p_case_id: document.getElementById('caseSelect').value || null,
+      p_prev_doc_id: prev ? prev.id : null,
+    } : {};
+
+    if (mode === 'form') {
+      let form;
+      try { form = collectForm(); } catch (err) { return toast(err.message, true); }
+      btn.disabled = true;
+      const { data: docId, error } = await sb.rpc('create_document_v2', {
+        ...common, ...extra, p_file_path: null, p_file_name: null, p_file_type: null, p_file_size: null,
+        p_kind: 'form', p_form: form,
+      });
+      btn.disabled = false;
+      if (error) return toast(errMsg(error), true);
+      return location.replace(`doc.html?id=${encodeURIComponent(docId)}&new=1`);
+    }
+
+    const f = fileInput.files[0];
+    if (!f) return toast('파일을 골라 주세요.', true);
+    if (f.size > MAX) return toast('50MB 이하 파일만 올릴 수 있습니다.', true);
     btn.disabled = true;
     progress.textContent = '파일 올리는 중…';
 
@@ -145,15 +294,10 @@
     }
 
     progress.textContent = '등록 중…';
-    const { data: docId, error } = await sb.rpc('create_document', {
-      p_title: document.getElementById('title').value,
-      p_description: document.getElementById('desc').value,
-      p_file_path: path,
-      p_file_name: f.name,
-      p_file_type: f.type || ext,
-      p_file_size: f.size,
-      p_approvers: approvers,
-    });
+    const fileArgs = { p_file_path: path, p_file_name: f.name, p_file_type: f.type || ext, p_file_size: f.size };
+    const { data: docId, error } = v2
+      ? await sb.rpc('create_document_v2', { ...common, ...fileArgs, ...extra, p_kind: 'file', p_form: null })
+      : await sb.rpc('create_document', { ...common, ...fileArgs });
     if (error) {
       await sb.storage.from('docs').remove([path]);
       btn.disabled = false;

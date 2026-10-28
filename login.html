@@ -14,18 +14,31 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=2.0.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js"></script>
-<script src="app.js"></script>
+<script src="config.js?v=2.0.0"></script>
+<script src="app.js?v=2.0.0"></script>
 </head>
 <body>
 <main class="center-wrap">
   <div class="card login-card">
     <div class="page-title">📁 <span id="company"></span> 인트라넷</div>
-    <p class="muted">회사 이메일로 로그인하세요. 비밀번호 없이 메일로 받은 6자리 코드를 입력합니다.</p>
+    <div class="tabs" id="loginTabs" style="margin:12px 0 0">
+      <button class="tab active" type="button" data-tab="pw">🔑 비밀번호</button>
+      <button class="tab" type="button" data-tab="code">✉️ 이메일 코드</button>
+    </div>
 
-    <form id="emailForm">
+    <form id="pwForm">
+      <label for="pwEmail">이메일</label>
+      <input type="email" id="pwEmail" required autocomplete="username" placeholder="name@company.com">
+      <label for="pw">비밀번호</label>
+      <input type="password" id="pw" required autocomplete="current-password">
+      <div class="btn-row"><button class="btn" type="submit" style="width:100%">로그인</button></div>
+      <p class="muted" style="margin-top:10px">처음이거나 비밀번호를 잊었다면 <a href="#" id="toCode">✉️ 이메일 코드</a>로 로그인한 뒤 비밀번호를 정하세요.</p>
+    </form>
+
+    <form id="emailForm" hidden>
+      <p class="muted" style="margin-top:12px">메일로 받은 6자리 코드로 로그인합니다. 처음 로그인할 때 쓰세요.</p>
       <label for="email">이메일</label>
       <input type="email" id="email" required autocomplete="email" placeholder="name@company.com">
       <div class="btn-row"><button class="btn" type="submit" style="width:100%">인증 코드 받기</button></div>
@@ -41,6 +54,7 @@
       </div>
       <p class="notice">카카오톡 안에서 열었다면 메일 링크 대신 <b>코드 입력</b>을 사용하세요. (카톡 브라우저와 메일앱은 로그인이 공유되지 않습니다)</p>
     </form>
+    <p class="muted" style="margin-top:14px;text-align:center"><a href="help.html">📲 PC·휴대폰에 설치하는 방법</a></p>
   </div>
 </main>
 <script>
@@ -70,9 +84,38 @@
   if (session) return goNext();
   sb.auth.onAuthStateChange((event, s) => { if (s) goNext(); });
 
+  const pwForm = document.getElementById('pwForm');
   const emailForm = document.getElementById('emailForm');
   const codeForm = document.getElementById('codeForm');
   let email = '';
+  let lastEmail = '';
+  try { lastEmail = localStorage.getItem('intranet_email') || ''; } catch {}
+  document.getElementById('pwEmail').value = lastEmail;
+  document.getElementById('email').value = lastEmail;
+  const remember = (em) => { try { localStorage.setItem('intranet_email', em); } catch {} };
+
+  function setTab(t) {
+    document.querySelectorAll('#loginTabs .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
+    pwForm.hidden = t !== 'pw';
+    emailForm.hidden = t !== 'code';
+    codeForm.hidden = true;
+  }
+  document.getElementById('loginTabs').onclick = (e) => { const b = e.target.closest('[data-tab]'); if (b) setTab(b.dataset.tab); };
+  document.getElementById('toCode').onclick = (e) => { e.preventDefault(); setTab('code'); };
+  // 비밀번호를 한 번도 안 정한 기기에서는 이메일 코드 탭부터
+  try { if (!localStorage.getItem('intranet_email')) setTab('code'); } catch {}
+
+  pwForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const em = document.getElementById('pwEmail').value.trim().toLowerCase();
+    const btn = pwForm.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const { error } = await sb.auth.signInWithPassword({ email: em, password: document.getElementById('pw').value });
+    btn.disabled = false;
+    if (error) return toast(errMsg(error), true);
+    remember(em);
+    goNext();
+  };
 
   emailForm.onsubmit = async (e) => {
     e.preventDefault();
@@ -99,6 +142,9 @@
     const { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
     btn.disabled = false;
     if (error) return toast(errMsg(error), true);
+    remember(email);
+    // 다음 화면에서 비밀번호를 정하라고 한 번 권한다
+    try { if (!localStorage.getItem('intranet_pw_prompted')) localStorage.setItem('intranet_pw_prompt', 'pending'); } catch {}
     goNext();
   };
 
