@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>상담 · 사내 인트라넷</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1a4f8a">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="인트라넷">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="style.css?v=3.0.0">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
+<script src="config.js?v=3.0.0"></script>
+<script src="app.js?v=3.0.0"></script>
+</head>
+<body>
+<main class="container">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <div style="flex:1;min-width:0">
+      <div class="page-title">상담</div>
+      <p class="muted">상담 내용과 다음 연락일을 남기고, 수임되면 버튼 하나로 사건을 만듭니다.</p>
+    </div>
+    <button class="btn" id="newBtn">＋ 상담 기록</button>
+  </div>
+  <div id="v3"></div>
+
+  <form class="card" id="cForm" hidden style="margin-top:16px">
+    <h2 id="formTitle">상담 기록</h2>
+    <div class="grid2">
+      <div><label for="cName">의뢰인 이름</label><input type="text" id="cName" required maxlength="100"></div>
+      <div><label for="cPhone">연락처</label><input type="tel" id="cPhone" maxlength="30" placeholder="010-0000-0000"></div>
+      <div><label for="cEmail">이메일 (선택)</label><input type="email" id="cEmail" maxlength="100"></div>
+      <div><label for="cFollow">다음 연락일 (선택)</label><input type="date" id="cFollow"></div>
+    </div>
+    <label for="cSummary">상담 내용</label>
+    <textarea id="cSummary" maxlength="4000" placeholder="사건 개요, 의뢰인 요구사항, 견적 안내 내용 등"></textarea>
+    <div class="btn-row"><button class="btn" type="submit">저장</button><button class="btn ghost" type="button" id="cancelBtn">취소</button></div>
+  </form>
+
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-tab="active">진행중 <span id="cActive"></span></button>
+    <button class="tab" data-tab="retained">수임</button>
+    <button class="tab" data-tab="dropped">종료</button>
+    <button class="tab" data-tab="all">전체</button>
+  </div>
+  <input type="text" id="search" placeholder="이름·연락처·내용 검색" style="margin-bottom:12px">
+  <div class="doc-list" id="list"><div class="empty">불러오는 중…</div></div>
+</main>
+<script>
+(async () => {
+  const { sb, esc, fmtDate, toast, errMsg, copyText } = App;
+  const me = await App.requireAuth();
+  if (!(await App.hasV3())) { document.getElementById('v3').innerHTML = App.V3_NOTICE; document.getElementById('list').innerHTML = ''; document.getElementById('newBtn').hidden = true; return; }
+  const members = await App.loadMembers();
+  const nameOf = Object.fromEntries(members.map(m => [m.id, m.name]));
+  const today = App.ymdLocal(new Date());
+  let rows = [], tab = 'active', editing = null;
+
+  async function load() {
+    const { data, error } = await sb.from('consultations').select('*').order('created_at', { ascending: false });
+    if (error) return toast(errMsg(error), true);
+    rows = data; render();
+  }
+  function render() {
+    const q = document.getElementById('search').value.trim().toLowerCase();
+    const active = rows.filter(r => r.status === 'new' || r.status === 'followup');
+    document.getElementById('cActive').textContent = active.length ? `(${active.length})` : '';
+    let list = { active, retained: rows.filter(r => r.status === 'retained'), dropped: rows.filter(r => r.status === 'dropped'), all: rows }[tab];
+    if (q) list = list.filter(r => [r.client_name, r.phone, r.summary, r.email].some(v => (v || '').toLowerCase().includes(q)));
+    if (tab === 'active') list = list.slice().sort((a, b) => (a.follow_up_date || '9999') < (b.follow_up_date || '9999') ? -1 : 1);
+    const el = document.getElementById('list');
+    if (!list.length) { el.innerHTML = `<div class="empty">${tab === 'active' ? '진행중인 상담이 없습니다. [＋ 상담 기록]으로 남기세요.' : '상담 기록이 없습니다.'}</div>`; return; }
+    el.innerHTML = list.map(r => {
+      const late = r.follow_up_date && r.follow_up_date < today && (r.status === 'new' || r.status === 'followup');
+      return `<div class="doc-item consult${late ? ' late' : ''}" id="c-${r.id}" data-id="${r.id}">
+        <div class="row1"><span>📞</span><span class="title">${esc(r.client_name)}</span>
+          ${r.follow_up_date && (r.status === 'new' || r.status === 'followup') ? `<span class="badge ${late ? 'rejected' : 'myturn'}">연락 ${App.ddayDate(r.follow_up_date)}</span>` : ''}
+          <span class="badge ${r.status === 'retained' ? 'approved' : r.status === 'dropped' ? 'none' : 'pending'}">${App.CONSULT_STATUS[r.status]}</span></div>
+        ${r.summary ? `<div class="consult-sum">${esc(r.summary)}</div>` : ''}
+        <div class="meta">
+          ${r.phone ? `<button class="link-btn copy" data-copy="${esc(r.phone)}">📱 ${esc(r.phone)}</button>` : ''}
+          ${r.email ? `<span>✉️ ${esc(r.email)}</span>` : ''}
+          <span>상담 ${esc(nameOf[r.created_by] || '')} · ${fmtDate(r.created_at)}</span>
+          ${r.case_id ? `<a href="case.html?id=${encodeURIComponent(r.case_id)}">⚖️ 사건 보기</a>` : ''}
+        </div>
+        <div class="btn-row" style="margin-top:8px">
+          ${r.status !== 'retained' ? '<button class="btn sm" data-act="retain">✅ 수임 → 사건 만들기</button>' : ''}
+          <button class="btn ghost sm" data-act="edit">수정</button>
+          ${r.status !== 'retained' ? `<select class="status-sel" data-act="status" aria-label="상태">${['new', 'followup', 'dropped'].map(k => `<option value="${k}"${r.status === k ? ' selected' : ''}>${App.CONSULT_STATUS[k]}</option>`).join('')}</select>` : ''}
+          ${r.created_by === me.id || me.role === 'admin' ? '<button class="link-btn" data-act="del">삭제</button>' : ''}
+        </div>
+      </div>`;
+    }).join('');
+    if (location.hash) { const t = document.getElementById('c-' + location.hash.slice(1)); if (t) t.classList.add('focus'); }
+  }
+
+  const form = document.getElementById('cForm');
+  const f = id => document.getElementById(id);
+  function openForm(r) {
+    editing = r || null;
+    f('formTitle').textContent = r ? '상담 수정' : '상담 기록';
+    f('cName').value = r ? r.client_name : ''; f('cPhone').value = r ? r.phone || '' : '';
+    f('cEmail').value = r ? r.email || '' : ''; f('cFollow').value = r ? r.follow_up_date || '' : '';
+    f('cSummary').value = r ? r.summary || '' : '';
+    form.hidden = false; f('cName').focus(); form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  f('newBtn').onclick = () => openForm();
+  f('cancelBtn').onclick = () => (form.hidden = true);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const row = { client_name: f('cName').value.trim(), phone: f('cPhone').value.trim() || null, email: f('cEmail').value.trim() || null,
+      follow_up_date: f('cFollow').value || null, summary: f('cSummary').value.trim() || null };
+    if (!editing) row.status = row.follow_up_date ? 'followup' : 'new';
+    const { error } = editing ? await sb.from('consultations').update(row).eq('id', editing.id)
+      : await sb.from('consultations').insert({ ...row, created_by: me.id });
+    if (error) return toast(errMsg(error), true);
+    form.hidden = true; toast('저장했습니다.'); load();
+  };
+
+  document.getElementById('list').addEventListener('click', async (e) => {
+    const c = e.target.closest('[data-copy]'); if (c) return copyText(c.dataset.copy);
+    const b = e.target.closest('button[data-act]'); if (!b) return;
+    const id = b.closest('[data-id]').dataset.id;
+    const r = rows.find(x => x.id === id);
+    if (b.dataset.act === 'edit') return openForm(r);
+    if (b.dataset.act === 'del') {
+      if (!confirm('상담 기록을 삭제할까요?')) return;
+      const { error } = await sb.from('consultations').delete().eq('id', id);
+      if (error) return toast(errMsg(error), true);
+      return load();
+    }
+    if (b.dataset.act === 'retain') {
+      const name = prompt('만들 사건 이름', `${r.client_name} 사건`);
+      if (name === null) return;
+      const { data: caseId, error } = await sb.rpc('retain_consultation', { p_id: id, p_case_name: name });
+      if (error) return toast(errMsg(error), true);
+      toast('사건을 만들었습니다.');
+      location.href = `case.html?id=${encodeURIComponent(caseId)}`;
+    }
+  });
+  document.getElementById('list').addEventListener('change', async (e) => {
+    if (e.target.dataset.act !== 'status') return;
+    const id = e.target.closest('[data-id]').dataset.id;
+    const { error } = await sb.from('consultations').update({ status: e.target.value }).eq('id', id);
+    if (error) return toast(errMsg(error), true);
+    load();
+  });
+  document.getElementById('tabs').onclick = (e) => {
+    const b = e.target.closest('.tab'); if (!b) return;
+    tab = b.dataset.tab;
+    document.querySelectorAll('#tabs .tab').forEach(t => t.classList.toggle('active', t === b));
+    render();
+  };
+  document.getElementById('search').oninput = render;
+  if (new URLSearchParams(location.search).get('new')) openForm();
+  await load();
+})().catch(e => console.warn(e.message));
+</script>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>공지 · 사내 인트라넷</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1a4f8a">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="인트라넷">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="style.css?v=3.0.0">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
+<script src="config.js?v=3.0.0"></script>
+<script src="app.js?v=3.0.0"></script>
+</head>
+<body>
+<main class="container" style="max-width:820px">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <div style="flex:1;min-width:0">
+      <div class="page-title">공지사항</div>
+      <p class="muted">공지를 올리면 전 직원에게 알림이 가고, 누가 읽었는지 확인됩니다.</p>
+    </div>
+    <button class="btn" id="newBtn" hidden>＋ 공지 쓰기</button>
+  </div>
+  <div id="v3"></div>
+
+  <form class="card" id="nForm" hidden style="margin-top:16px">
+    <h2>공지 쓰기</h2>
+    <label for="nTitle">제목</label><input type="text" id="nTitle" required maxlength="200">
+    <label for="nBody">내용</label><textarea id="nBody" maxlength="8000" style="min-height:160px"></textarea>
+    <label class="check" style="margin-top:10px"><input type="checkbox" id="nPin"> 📌 맨 위에 고정</label>
+    <div class="btn-row"><button class="btn" type="submit">올리기 (전 직원 알림)</button><button class="btn ghost" type="button" id="cancelBtn">취소</button></div>
+  </form>
+
+  <div class="notice-list" id="list" style="margin-top:16px"><div class="empty">불러오는 중…</div></div>
+</main>
+<script>
+(async () => {
+  const { sb, esc, fmtDate, toast, errMsg } = App;
+  const me = await App.requireAuth();
+  if (!(await App.hasV3())) { document.getElementById('v3').innerHTML = App.V3_NOTICE; document.getElementById('list').innerHTML = ''; return; }
+  const isAdmin = me.role === 'admin';
+  document.getElementById('newBtn').hidden = !isAdmin;
+  const members = await App.loadMembers();
+  const nameOf = Object.fromEntries(members.map(m => [m.id, m.name]));
+  let notices = [], reads = [], openId = location.hash.slice(1) || null;
+
+  async function load() {
+    const [n, r] = await Promise.all([
+      sb.from('notices').select('*').order('created_at', { ascending: false }),
+      sb.from('notice_reads').select('*'),
+    ]);
+    if (n.error) return toast(errMsg(n.error), true);
+    notices = n.data.sort((a, b) => (b.pinned - a.pinned) || (a.created_at < b.created_at ? 1 : -1));
+    reads = r.data || [];
+    render();
+    if (openId) markRead(openId);
+  }
+  function render() {
+    const list = document.getElementById('list');
+    if (!notices.length) { list.innerHTML = `<div class="empty">공지가 없습니다.${isAdmin ? ' [＋ 공지 쓰기]로 올리세요.' : ''}</div>`; return; }
+    list.innerHTML = notices.map(n => {
+      const readBy = reads.filter(r => r.notice_id === n.id);
+      const iRead = readBy.some(r => r.user_id === me.id) || n.created_by === me.id;
+      const open = openId === n.id;
+      const others = members.filter(m => m.id !== n.created_by);
+      const unread = others.filter(m => !readBy.some(r => r.user_id === m.id));
+      return `<article class="card notice-item${open ? ' open' : ''}" id="n-${n.id}" data-id="${n.id}">
+        <button class="notice-head" data-act="toggle" aria-expanded="${open}">
+          <span class="notice-title">${n.pinned ? '📌 ' : ''}${esc(n.title)}</span>
+          ${iRead ? '' : '<span class="badge pending">안 읽음</span>'}
+          ${isAdmin ? `<span class="badge none">읽음 ${others.length - unread.length}/${others.length}</span>` : ''}
+          <span class="when">${esc(nameOf[n.created_by] || '')} · ${fmtDate(n.created_at)}</span>
+        </button>
+        ${open ? `<div class="notice-body">${esc(n.body || '')}</div>
+          ${isAdmin ? `<p class="muted" style="margin-top:12px">${unread.length ? `아직 안 읽은 사람: ${unread.map(m => esc(m.name)).join(', ')}` : '모두 읽었습니다 ✅'}</p>
+            <div class="btn-row"><button class="btn ghost sm" data-act="pin">${n.pinned ? '고정 해제' : '📌 고정'}</button><button class="btn ghost sm" data-act="del" style="color:var(--bad)">삭제</button></div>` : ''}` : ''}
+      </article>`;
+    }).join('');
+  }
+  async function markRead(id) {
+    if (reads.some(r => r.notice_id === id && r.user_id === me.id)) return;
+    const { error } = await sb.rpc('read_notice', { p_notice_id: id });
+    if (!error) { reads.push({ notice_id: id, user_id: me.id }); render(); }
+  }
+  document.getElementById('list').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    const id = b.closest('[data-id]').dataset.id;
+    if (b.dataset.act === 'toggle') {
+      openId = openId === id ? null : id;
+      history.replaceState(null, '', openId ? `#${openId}` : location.pathname);
+      render();
+      if (openId) markRead(openId);
+    } else if (b.dataset.act === 'pin') {
+      const n = notices.find(x => x.id === id);
+      const { error } = await sb.from('notices').update({ pinned: !n.pinned }).eq('id', id);
+      if (error) return toast(errMsg(error), true);
+      load();
+    } else if (b.dataset.act === 'del') {
+      if (!confirm('공지를 삭제할까요?')) return;
+      const { error } = await sb.from('notices').delete().eq('id', id);
+      if (error) return toast(errMsg(error), true);
+      openId = null; load();
+    }
+  });
+  const form = document.getElementById('nForm');
+  document.getElementById('newBtn').onclick = () => { form.hidden = false; document.getElementById('nTitle').focus(); };
+  document.getElementById('cancelBtn').onclick = () => (form.hidden = true);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const { error } = await sb.from('notices').insert({
+      title: document.getElementById('nTitle').value.trim(), body: document.getElementById('nBody').value.trim() || null,
+      pinned: document.getElementById('nPin').checked, created_by: me.id,
+    });
+    if (error) return toast(errMsg(error), true);
+    form.reset(); form.hidden = true; toast('공지를 올렸습니다.'); load();
+  };
+  await load();
+})().catch(e => console.warn(e.message));
+</script>
+</body>
+</html>

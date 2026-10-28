@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>자료실 · 사내 인트라넷</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1a4f8a">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="인트라넷">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="style.css?v=3.0.0">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
+<script src="config.js?v=3.0.0"></script>
+<script src="app.js?v=3.0.0"></script>
+</head>
+<body>
+<main class="container">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <div style="flex:1;min-width:0">
+      <div class="page-title">자료실</div>
+      <p class="muted">위임장·내용증명·계약서 같은 자주 쓰는 양식을 모아 두고 내려받아 씁니다.</p>
+    </div>
+    <button class="btn" id="newBtn">＋ 양식 올리기</button>
+  </div>
+  <div id="v3"></div>
+
+  <form class="card" id="tForm" hidden style="margin-top:16px">
+    <h2>양식 올리기</h2>
+    <label for="tFile">파일 (최대 50MB)</label>
+    <input type="file" id="tFile" required accept=".pdf,.doc,.docx,.xls,.xlsx,.hwp,.hwpx,.ppt,.pptx,.png,.jpg,.jpeg,.zip">
+    <div class="grid2">
+      <div><label for="tTitle">이름</label><input type="text" id="tTitle" required maxlength="200" placeholder="예) 소송위임장 (민사)"></div>
+      <div><label for="tCat">분류</label><select id="tCat"></select></div>
+    </div>
+    <label for="tMemo">설명 (선택)</label><input type="text" id="tMemo" maxlength="300" placeholder="예) 2026년 개정 서식">
+    <div class="btn-row"><button class="btn" type="submit" id="saveBtn">올리기</button><button class="btn ghost" type="button" id="cancelBtn">취소</button></div>
+  </form>
+
+  <div class="tabs" id="tabs"></div>
+  <input type="text" id="search" placeholder="양식 이름 검색" style="margin-bottom:12px">
+  <div class="lib-grid" id="list"><div class="empty">불러오는 중…</div></div>
+</main>
+<script>
+(async () => {
+  const { sb, esc, fmtDate, fmtSize, toast, errMsg, fileIcon } = App;
+  const me = await App.requireAuth();
+  if (!(await App.hasV3())) { document.getElementById('v3').innerHTML = App.V3_NOTICE; document.getElementById('list').innerHTML = ''; document.getElementById('newBtn').hidden = true; return; }
+  const CATS = ['위임장', '내용증명', '계약서', '소장·서면', '신청서', '기타'];
+  let items = [], cat = '';
+  document.getElementById('tCat').innerHTML = CATS.map(c => `<option>${c}</option>`).join('');
+  const tabs = document.getElementById('tabs');
+  tabs.innerHTML = ['', ...CATS].map(c => `<button class="tab${c === '' ? ' active' : ''}" data-cat="${c}">${c || '전체'}</button>`).join('');
+
+  async function load() {
+    const { data, error } = await sb.from('templates').select('*').order('created_at', { ascending: false });
+    if (error) return toast(errMsg(error), true);
+    items = data; render();
+  }
+  function render() {
+    const q = document.getElementById('search').value.trim().toLowerCase();
+    let rows = items.filter(i => !cat || i.category === cat);
+    if (q) rows = rows.filter(i => [i.title, i.memo, i.file_name].some(v => (v || '').toLowerCase().includes(q)));
+    const el = document.getElementById('list');
+    if (!rows.length) { el.innerHTML = '<div class="empty">양식이 없습니다. [＋ 양식 올리기]로 모아 두세요.</div>'; return; }
+    el.innerHTML = rows.map(i => `<div class="lib-item" data-id="${i.id}">
+      <div class="lib-icon">${fileIcon(i.file_type, i.file_name)}</div>
+      <div class="lib-body">
+        <div class="task-title">${esc(i.title)}</div>
+        <div class="meta"><span class="badge none">${esc(i.category)}</span>${i.memo ? `<span>${esc(i.memo)}</span>` : ''}<span>${esc(i.file_name)} ${fmtSize(i.file_size)}</span></div>
+      </div>
+      <div class="lib-actions">
+        <button class="btn sm" data-act="down">⬇️ 받기</button>
+        ${i.uploaded_by === me.id || me.role === 'admin' ? '<button class="link-btn" data-act="del">삭제</button>' : ''}
+      </div>
+    </div>`).join('');
+  }
+  document.getElementById('list').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    const i = items.find(x => x.id === b.closest('[data-id]').dataset.id);
+    if (b.dataset.act === 'down') {
+      const { data, error } = await sb.storage.from('docs').createSignedUrl(i.file_path, 600, { download: i.file_name });
+      if (error) return toast(errMsg(error), true);
+      location.href = data.signedUrl;
+    } else if (b.dataset.act === 'del') {
+      if (!confirm(`'${i.title}' 양식을 삭제할까요?`)) return;
+      await sb.storage.from('docs').remove([i.file_path]);
+      const { error } = await sb.from('templates').delete().eq('id', i.id);
+      if (error) return toast(errMsg(error), true);
+      load();
+    }
+  });
+  const form = document.getElementById('tForm');
+  document.getElementById('newBtn').onclick = () => { form.hidden = false; if (cat) document.getElementById('tCat').value = cat; };
+  document.getElementById('cancelBtn').onclick = () => (form.hidden = true);
+  document.getElementById('tFile').onchange = (e) => {
+    const f = e.target.files[0], t = document.getElementById('tTitle');
+    if (f && !t.value) t.value = f.name.replace(/\.[^.]+$/, '');
+  };
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const f = document.getElementById('tFile').files[0]; if (!f) return;
+    if (f.size > 50 * 1024 * 1024) return toast('50MB 이하 파일만 올릴 수 있습니다.', true);
+    const btn = document.getElementById('saveBtn'); btn.disabled = true;
+    const ext = (f.name.match(/\.([A-Za-z0-9]{1,8})$/) || [, 'bin'])[1].toLowerCase();
+    const rand = crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+    const path = `${me.id}/tpl-${rand}.${ext}`;
+    const up = await sb.storage.from('docs').upload(path, f, { contentType: f.type || 'application/octet-stream' });
+    if (up.error) { btn.disabled = false; return toast(errMsg(up.error), true); }
+    const { error } = await sb.from('templates').insert({
+      title: document.getElementById('tTitle').value.trim(), category: document.getElementById('tCat').value,
+      memo: document.getElementById('tMemo').value.trim() || null, file_path: path, file_name: f.name,
+      file_type: f.type || ext, file_size: f.size, uploaded_by: me.id,
+    });
+    btn.disabled = false;
+    if (error) { await sb.storage.from('docs').remove([path]); return toast(errMsg(error), true); }
+    form.reset(); form.hidden = true; toast('양식을 올렸습니다.'); load();
+  };
+  tabs.onclick = (e) => {
+    const b = e.target.closest('.tab'); if (!b) return;
+    cat = b.dataset.cat;
+    tabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === b));
+    render();
+  };
+  document.getElementById('search').oninput = render;
+  await load();
+})().catch(e => console.warn(e.message));
+</script>
+</body>
+</html>

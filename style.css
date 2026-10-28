@@ -249,7 +249,7 @@ table.sheet th { position: sticky; left: 0; background: #f1f5fa; color: var(--te
 /* ===== v2: 사건 · 일정 · 양식 · 버전 ===== */
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 12px; }
 .filter-row { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-.filter-row input { flex: 1; min-width: 180px; }
+.filter-row input[type=text] { flex: 1; min-width: 180px; }
 .filter-row select { width: auto; max-width: 100%; }
 .stat { font-size: 24px; font-weight: 700; color: var(--primary); }
 .link-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 12px; margin-left: 6px; padding: 0; }
@@ -314,4 +314,77 @@ table.kv th { width: 30%; background: var(--soft); color: var(--text); font-weig
   .topbar nav { margin-left: 0; width: 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
   .topbar nav::-webkit-scrollbar { display: none; }
   .topbar nav a, .topbar nav button { white-space: nowrap; flex-shrink: 0; padding: 6px 8px; }
+}
+
+/* ===== v3 ===== */
+.home-hello { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.quick { display: flex; gap: 6px; flex-wrap: wrap; }
+.home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; align-items: start; }
+.home-grid .card { margin: 0; }
+.home-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.home-list li { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; align-items: baseline; }
+.home-list li > a, .home-list li > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.home-list .when { flex-shrink: 0; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.home-list .empty-li { color: var(--text-muted); font-size: 13px; }
+.more { display: inline-block; margin-top: 12px; font-size: 13px; }
+.bad-text { color: var(--bad) !important; }
+.money { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.money div { background: var(--soft); border-radius: 10px; padding: 10px 12px; }
+.money span { display: block; font-size: 12px; color: var(--text-muted); }
+.money b { font-size: 17px; font-variant-numeric: tabular-nums; }
+@media (max-width: 400px) { .home-grid { grid-template-columns: minmax(0, 1fr); } }
+.check { display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 0; white-space: nowrap; color: var(--text-muted); }
+.task-list { display: flex; flex-direction: column; gap: 8px; }
+.task { display: flex; gap: 12px; align-items: flex-start; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+.task.late { border-left: 4px solid var(--bad); }
+.task.done .task-title { text-decoration: line-through; color: var(--text-muted); }
+.task-check { width: 20px; height: 20px; margin-top: 2px; accent-color: var(--ok); flex-shrink: 0; }
+.task-body { flex: 1; min-width: 0; }
+.task-title { font-weight: 500; overflow-wrap: anywhere; }
+.task-memo { font-size: 13px; color: var(--text-muted); white-space: pre-wrap; margin-top: 2px; overflow-wrap: anywhere; }
+.task .meta { margin-top: 4px; display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); }
+.task-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
+.task-status { width: auto; padding: 4px 8px; font-size: 12px; }
+.consult-sum { margin-top: 6px; font-size: 13px; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.doc-item.late { border-left: 4px solid var(--bad); }
+.doc-item.focus { outline: 2px solid var(--accent); }
+.status-sel { width: auto; padding: 4px 8px; font-size: 12px; }
+div.doc-item:hover { transform: none; }
+.notice-list { display: flex; flex-direction: column; gap: 10px; }
+.notice-item { margin: 0; padding: 0; overflow: hidden; }
+.notice-head { width: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: none; border: none; padding: 16px 18px; cursor: pointer; text-align: left; font-family: inherit; color: var(--text); }
+.notice-title { font-weight: 700; font-size: 15px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.notice-head .when { font-size: 12px; color: var(--text-muted); }
+.notice-item.open { border-color: var(--primary-light); }
+.notice-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; padding: 0 18px; }
+.notice-item.open .btn-row, .notice-item.open > p { padding: 0 18px 16px; }
+.notice-item.open .notice-body:last-child { padding-bottom: 16px; }
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+.lib-item { display: flex; gap: 12px; align-items: center; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+.lib-icon { font-size: 28px; flex-shrink: 0; }
+.lib-body { flex: 1; min-width: 0; }
+.lib-item .meta { margin-top: 4px; display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); align-items: center; }
+.lib-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+@media (max-width: 400px) { .lib-grid { grid-template-columns: minmax(0, 1fr); } }
+.copy-rows { display: flex; flex-direction: column; gap: 6px; }
+.copy-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.copy-row .k { width: 60px; color: var(--text-muted); flex-shrink: 0; }
+.copy-row .v { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.inline-form { display: flex; gap: 6px; margin-top: 10px; }
+.inline-form input { flex: 1; min-width: 0; }
+.pay-form { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+.pay-form input { padding: 7px 10px; font-size: 13px; }
+.pay-form .btn { grid-column: 1 / -1; }
+
+/* 메뉴가 많아져서: 넓은 화면도 로고는 한 줄, 메뉴는 넘치면 가로로 넘기기 */
+.brand { white-space: nowrap; }
+@media (max-width: 1180px) and (min-width: 601px) {
+  .topbar-inner { flex-wrap: wrap; gap: 2px 8px; padding-bottom: 6px; }
+  .topbar nav { margin-left: 0; width: 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .topbar nav::-webkit-scrollbar { display: none; }
+  .topbar nav a, .topbar nav button { white-space: nowrap; flex-shrink: 0; }
+}
+@media (min-width: 1181px) {
+  .topbar-inner { max-width: 1180px; }
+  .topbar nav a, .topbar nav button { padding: 6px 8px; }
 }

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>업무 · 사내 인트라넷</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1a4f8a">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="인트라넷">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="style.css?v=3.0.0">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
+<script src="config.js?v=3.0.0"></script>
+<script src="app.js?v=3.0.0"></script>
+</head>
+<body>
+<main class="container">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <div style="flex:1;min-width:0">
+      <div class="page-title">업무</div>
+      <p class="muted">업무를 지시하면 담당자에게 알림이 가고, 진행·완료까지 한눈에 봅니다.</p>
+    </div>
+    <button class="btn" id="newBtn">＋ 업무 지시</button>
+  </div>
+  <div id="v3"></div>
+
+  <form class="card" id="taskForm" hidden style="margin-top:16px">
+    <h2>업무 지시</h2>
+    <div class="grid2">
+      <div><label for="tTitle">할 일</label><input type="text" id="tTitle" required maxlength="200" placeholder="예) 준비서면 초안 작성"></div>
+      <div><label for="tAssignee">담당자</label><select id="tAssignee" required></select></div>
+      <div><label for="tDue">마감일 (선택)</label><input type="date" id="tDue"></div>
+      <div><label for="tCase">사건 (선택)</label><select id="tCase"><option value="">사건 없음</option></select></div>
+    </div>
+    <label for="tMemo">설명 (선택)</label><textarea id="tMemo" maxlength="2000" placeholder="참고 자료, 요청 사항"></textarea>
+    <div class="btn-row"><button class="btn" type="submit">지시하기</button><button class="btn ghost" type="button" id="cancelBtn">취소</button></div>
+  </form>
+
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-tab="mine">내 할 일 <span id="cMine"></span></button>
+    <button class="tab" data-tab="given">내가 지시한 일 <span id="cGiven"></span></button>
+    <button class="tab" data-tab="all">전체</button>
+  </div>
+  <div class="filter-row">
+    <input type="text" id="search" placeholder="할 일·담당자·사건 검색">
+    <label class="check"><input type="checkbox" id="showDone"> 완료 포함</label>
+  </div>
+  <div class="task-list" id="list"><div class="empty">불러오는 중…</div></div>
+</main>
+<script>
+(async () => {
+  const { sb, esc, toast, errMsg } = App;
+  const me = await App.requireAuth();
+  if (!(await App.hasV3())) { document.getElementById('v3').innerHTML = App.V3_NOTICE; document.getElementById('list').innerHTML = ''; document.getElementById('newBtn').hidden = true; return; }
+  const params = new URLSearchParams(location.search);
+  const members = await App.loadMembers();
+  const nameOf = Object.fromEntries(members.map(m => [m.id, m.name]));
+  const cases = await App.loadCases(true).catch(() => []);
+  const caseName = Object.fromEntries(cases.map(c => [c.id, c.name]));
+  document.getElementById('tAssignee').innerHTML = members.map(m => `<option value="${m.id}"${m.id === me.id ? ' selected' : ''}>${esc(m.name)}${m.id === me.id ? ' (나)' : m.dept ? ` (${esc(m.dept)})` : ''}</option>`).join('');
+  document.getElementById('tCase').innerHTML += cases.filter(c => c.status === 'open').map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  const today = App.ymdLocal(new Date());
+  let tasks = [], tab = 'mine';
+
+  async function load() {
+    const { data, error } = await sb.from('tasks').select('*').order('created_at', { ascending: false });
+    if (error) return toast(errMsg(error), true);
+    tasks = data;
+    render();
+  }
+
+  function render() {
+    const q = document.getElementById('search').value.trim().toLowerCase();
+    const showDone = document.getElementById('showDone').checked;
+    const open = tasks.filter(t => t.status !== 'done');
+    document.getElementById('cMine').textContent = (n => n ? `(${n})` : '')(open.filter(t => t.assignee_id === me.id).length);
+    document.getElementById('cGiven').textContent = (n => n ? `(${n})` : '')(open.filter(t => t.created_by === me.id && t.assignee_id !== me.id).length);
+    let rows = { mine: tasks.filter(t => t.assignee_id === me.id), given: tasks.filter(t => t.created_by === me.id && t.assignee_id !== me.id), all: tasks }[tab];
+    if (!showDone) rows = rows.filter(t => t.status !== 'done');
+    if (q) rows = rows.filter(t => [t.title, nameOf[t.assignee_id], caseName[t.case_id]].some(v => (v || '').toLowerCase().includes(q)));
+    rows = rows.slice().sort((a, b) => (a.status === 'done') - (b.status === 'done') || ((a.due_date || '9999') < (b.due_date || '9999') ? -1 : 1));
+    const list = document.getElementById('list');
+    if (!rows.length) { list.innerHTML = `<div class="empty">${tab === 'mine' ? '남은 할 일이 없습니다 🎉' : '업무가 없습니다'}</div>`; return; }
+    list.innerHTML = rows.map(t => {
+      const canEdit = t.assignee_id === me.id || t.created_by === me.id || me.role === 'admin';
+      const late = t.status !== 'done' && t.due_date && t.due_date < today;
+      return `<div class="task${t.status === 'done' ? ' done' : ''}${late ? ' late' : ''}" data-id="${t.id}">
+        <input type="checkbox" class="task-check" ${t.status === 'done' ? 'checked' : ''} ${canEdit ? '' : 'disabled'} aria-label="완료">
+        <div class="task-body">
+          <div class="task-title">${esc(t.title)}</div>
+          ${t.memo ? `<div class="task-memo">${esc(t.memo)}</div>` : ''}
+          <div class="meta">
+            <span>👤 ${esc(nameOf[t.assignee_id] || '(퇴사자)')}</span>
+            ${t.created_by !== t.assignee_id ? `<span>지시 ${esc(nameOf[t.created_by] || '')}</span>` : ''}
+            ${t.case_id && caseName[t.case_id] ? `<a href="case.html?id=${encodeURIComponent(t.case_id)}">⚖️ ${esc(caseName[t.case_id])}</a>` : ''}
+            ${t.due_date ? `<span class="${late ? 'bad-text' : ''}">📅 ${t.due_date.slice(5).replace('-', '/')} ${t.status === 'done' ? '' : App.ddayDate(t.due_date)}</span>` : ''}
+          </div>
+        </div>
+        <div class="task-side">
+          ${canEdit ? `<select class="task-status" aria-label="상태">${Object.entries(App.TASK_STATUS).map(([k, v]) => `<option value="${k}"${t.status === k ? ' selected' : ''}>${v}</option>`).join('')}</select>` : `<span class="badge none">${App.TASK_STATUS[t.status]}</span>`}
+          ${t.created_by === me.id || me.role === 'admin' ? '<button class="link-btn task-del">삭제</button>' : ''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  async function setStatus(id, status) {
+    const { error } = await sb.from('tasks').update({ status }).eq('id', id);
+    if (error) return toast(errMsg(error), true);
+    const t = tasks.find(x => x.id === id); if (t) t.status = status;
+    if (status === 'done') toast('완료했습니다.');
+    render();
+  }
+  const list = document.getElementById('list');
+  list.addEventListener('change', (e) => {
+    const row = e.target.closest('.task'); if (!row) return;
+    if (e.target.classList.contains('task-check')) setStatus(row.dataset.id, e.target.checked ? 'done' : 'todo');
+    if (e.target.classList.contains('task-status')) setStatus(row.dataset.id, e.target.value);
+  });
+  list.addEventListener('click', async (e) => {
+    if (!e.target.classList.contains('task-del')) return;
+    const row = e.target.closest('.task');
+    if (!confirm('이 업무를 삭제할까요?')) return;
+    const { error } = await sb.from('tasks').delete().eq('id', row.dataset.id);
+    if (error) return toast(errMsg(error), true);
+    load();
+  });
+
+  const form = document.getElementById('taskForm');
+  const openForm = () => { form.hidden = false; document.getElementById('tTitle').focus(); };
+  document.getElementById('newBtn').onclick = openForm;
+  document.getElementById('cancelBtn').onclick = () => (form.hidden = true);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const row = {
+      title: document.getElementById('tTitle').value.trim(),
+      assignee_id: document.getElementById('tAssignee').value,
+      due_date: document.getElementById('tDue').value || null,
+      case_id: document.getElementById('tCase').value || null,
+      memo: document.getElementById('tMemo').value.trim() || null,
+      created_by: me.id,
+    };
+    const { error } = await sb.from('tasks').insert(row);
+    if (error) return toast(errMsg(error), true);
+    form.reset(); form.hidden = true;
+    toast(row.assignee_id === me.id ? '할 일을 추가했습니다.' : `${nameOf[row.assignee_id]}님에게 업무를 지시했습니다.`);
+    document.getElementById('tAssignee').value = me.id;
+    if (row.assignee_id !== me.id) document.querySelector('[data-tab=given]').click();
+    load();
+  };
+  document.getElementById('tabs').onclick = (e) => {
+    const b = e.target.closest('.tab'); if (!b) return;
+    tab = b.dataset.tab;
+    document.querySelectorAll('#tabs .tab').forEach(t => t.classList.toggle('active', t === b));
+    render();
+  };
+  document.getElementById('search').oninput = render;
+  document.getElementById('showDone').onchange = render;
+  if (params.get('case')) document.getElementById('tCase').value = params.get('case');
+  if (params.get('new')) openForm();
+  await load();
+})().catch(e => console.warn(e.message));
+</script>
+</body>
+</html>

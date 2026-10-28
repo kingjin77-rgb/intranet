@@ -12,10 +12,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=2.0.0">
+<link rel="stylesheet" href="style.css?v=3.0.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=2.0.0"></script>
-<script src="app.js?v=2.0.0"></script>
+<script src="config.js?v=3.0.0"></script>
+<script src="app.js?v=3.0.0"></script>
 </head>
 <body>
 <main class="container">
@@ -34,6 +34,7 @@
       <a class="btn" id="addDoc">＋ 문서 올리기</a>
       <a class="btn ghost" id="addForm">＋ 양식 작성</a>
       <a class="btn ghost" id="addEvent">＋ 일정</a>
+      <a class="btn ghost" id="addTask" hidden>＋ 업무 지시</a>
       <button class="btn ghost" id="editBtn">수정</button>
       <button class="btn ghost" id="statusBtn"></button>
       <button class="btn ghost" id="delBtn" hidden style="color:var(--bad)">삭제</button>
@@ -56,9 +57,40 @@
         <h2>📄 문서·양식 <span class="count" id="docCount"></span></h2>
         <div class="doc-list" id="docs"></div>
       </div>
+      <div class="card" id="taskCard" hidden>
+        <h2>📌 이 사건의 할 일 <span class="count" id="taskCount"></span></h2>
+        <ul class="home-list" id="caseTasks"></ul>
+      </div>
     </div>
     <div>
-      <div class="card">
+      <div class="card" id="courtCard">
+        <h2>⚖️ 대법원 사건검색</h2>
+        <p class="muted" style="margin-bottom:10px">대법원 "나의 사건검색"은 법원·사건번호·당사자명을 넣어야 합니다. 아래 버튼으로 복사해서 붙여넣으세요.</p>
+        <div class="copy-rows" id="courtRows"></div>
+        <div class="btn-row"><a class="btn sm" href="https://www.scourt.go.kr/portal/information/events/search/search.jsp" target="_blank" rel="noopener">대법원 나의 사건검색 열기 ↗</a></div>
+      </div>
+      <div class="card" id="financeCard" hidden>
+        <h2>💵 수임료 · 입금</h2>
+        <div class="money">
+          <div><span>계약 금액</span><b id="fFee">-</b></div>
+          <div><span>입금 합계</span><b id="fPaid">-</b></div>
+          <div><span>미수금</span><b id="fUnpaid" class="bad-text">-</b></div>
+          <div><span>지출 (컨펌완료)</span><b id="fCost">-</b></div>
+        </div>
+        <form id="feeForm" class="inline-form">
+          <input type="text" id="feeInput" inputmode="numeric" placeholder="계약 금액 (원)" aria-label="계약 금액">
+          <button class="btn ghost sm" type="submit">금액 저장</button>
+        </form>
+        <h2 style="margin-top:14px;font-size:14px">입금 내역</h2>
+        <ul class="home-list" id="payments"></ul>
+        <form id="payForm" class="pay-form">
+          <input type="text" id="payAmount" inputmode="numeric" placeholder="입금액" required aria-label="입금액">
+          <input type="date" id="payDate" aria-label="입금일">
+          <input type="text" id="payMethod" placeholder="방법 (계좌이체 등)" maxlength="30" aria-label="입금 방법">
+          <button class="btn sm" type="submit">＋ 입금 기록</button>
+        </form>
+      </div>
+      <div class="card" id="costCard">
         <h2>💰 비용 (컨펌완료 지급품의)</h2>
         <div class="stat" id="cost">-</div>
         <p class="muted" id="costNote"></p>
@@ -89,6 +121,7 @@
     document.getElementById('cStatus').innerHTML = c.status === 'open' ? '<span class="badge pending">진행중</span>' : '<span class="badge none">종결</span>';
     document.getElementById('statusBtn').textContent = c.status === 'open' ? '종결 처리' : '다시 진행';
     document.getElementById('delBtn').hidden = !(c.created_by === me.id || me.role === 'admin');
+    renderCourt();
     return true;
   }
   if (!(await loadInfo())) return;
@@ -147,6 +180,86 @@
     if (error) return toast(errMsg(error), true);
     location.replace('cases.html');
   };
+
+  // ----- 대법원 사건검색 복사 버튼 -----
+  function renderCourt() {
+    const rows = [['법원', c.court], ['사건번호', c.case_no], ['당사자', c.client]];
+    document.getElementById('courtRows').innerHTML = rows.map(([k, v]) => `<div class="copy-row"><span class="k">${k}</span>
+      <span class="v">${v ? esc(v) : '<span class="muted">미입력 — [수정]에서 입력</span>'}</span>
+      ${v ? `<button class="btn ghost sm" data-copy="${esc(v)}">복사</button>` : ''}</div>`).join('');
+  }
+  document.getElementById('courtRows').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-copy]'); if (b) App.copyText(b.dataset.copy);
+  });
+
+  // ----- v3: 수임료 · 입금 · 할 일 -----
+  if (await App.hasV3()) {
+    const members = await App.loadMembers();
+    const nameOf = Object.fromEntries(members.map(m => [m.id, m.name]));
+    document.getElementById('addTask').hidden = false;
+    document.getElementById('addTask').href = `tasks.html?case=${q}&new=1`;
+    document.getElementById('financeCard').hidden = false;
+    document.getElementById('costCard').hidden = true;
+    document.getElementById('taskCard').hidden = false;
+    document.getElementById('payDate').value = App.ymdLocal(new Date());
+    const digits = v => (v || '').replace(/[^0-9]/g, '');
+    ['feeInput', 'payAmount'].forEach(idn => {
+      const el = document.getElementById(idn);
+      el.oninput = () => { const d = digits(el.value); el.value = d ? Number(d).toLocaleString('ko-KR') : ''; };
+    });
+
+    async function loadFinance() {
+      const [f, p] = await Promise.all([
+        sb.from('case_finance').select('*').eq('case_id', id).maybeSingle(),
+        sb.from('payments').select('*').eq('case_id', id).order('paid_on', { ascending: false }),
+      ]);
+      const fin = f.data || { fee_amount: 0, paid_amount: 0, unpaid_amount: 0, cost_amount: 0 };
+      document.getElementById('fFee').textContent = App.fmtWon(fin.fee_amount);
+      document.getElementById('fPaid').textContent = App.fmtWon(fin.paid_amount);
+      document.getElementById('fUnpaid').textContent = App.fmtWon(Math.max(0, fin.unpaid_amount));
+      document.getElementById('fCost').textContent = App.fmtWon(fin.cost_amount);
+      document.getElementById('feeInput').value = fin.fee_amount ? Number(fin.fee_amount).toLocaleString('ko-KR') : '';
+      const pays = p.data || [];
+      document.getElementById('payments').innerHTML = pays.length ? pays.map(x => `<li><span>${x.paid_on.slice(5).replace('-', '/')} · <b>${App.fmtWon(x.amount)}</b>${x.method ? ` · ${esc(x.method)}` : ''}</span>
+        <span class="when">${esc(nameOf[x.created_by] || '')}${x.created_by === me.id || me.role === 'admin' ? ` <button class="link-btn" data-del-pay="${x.id}">삭제</button>` : ''}</span></li>`).join('')
+        : '<li class="empty-li">입금 기록이 없습니다.</li>';
+    }
+    document.getElementById('feeForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const { error } = await sb.from('cases').update({ fee_amount: Number(digits(document.getElementById('feeInput').value) || 0) }).eq('id', id);
+      if (error) return toast(errMsg(error), true);
+      toast('계약 금액을 저장했습니다.'); loadFinance();
+    };
+    document.getElementById('payForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const amount = Number(digits(document.getElementById('payAmount').value));
+      if (!amount) return toast('입금액을 입력해 주세요.', true);
+      const { error } = await sb.from('payments').insert({
+        case_id: id, amount, paid_on: document.getElementById('payDate').value || App.ymdLocal(new Date()),
+        method: document.getElementById('payMethod').value.trim() || null, created_by: me.id,
+      });
+      if (error) return toast(errMsg(error), true);
+      document.getElementById('payAmount').value = ''; document.getElementById('payMethod').value = '';
+      toast('입금을 기록했습니다.'); loadFinance();
+    };
+    document.getElementById('payments').addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-del-pay]'); if (!b || !confirm('이 입금 기록을 삭제할까요?')) return;
+      const { error } = await sb.from('payments').delete().eq('id', b.dataset.delPay);
+      if (error) return toast(errMsg(error), true);
+      loadFinance();
+    });
+
+    async function loadTasks() {
+      const { data } = await sb.from('tasks').select('*').eq('case_id', id).order('due_date', { ascending: true });
+      const open = (data || []).filter(t => t.status !== 'done');
+      const today = App.ymdLocal(new Date());
+      document.getElementById('taskCount').textContent = open.length ? `${open.length}건` : '';
+      document.getElementById('caseTasks').innerHTML = open.length ? open.map(t => `<li><a href="tasks.html">${t.status === 'doing' ? '🔄' : '⬜'} ${esc(t.title)}</a>
+        <span class="when${t.due_date && t.due_date < today ? ' bad-text' : ''}">${esc(nameOf[t.assignee_id] || '')}${t.due_date ? ' · ' + App.ddayDate(t.due_date) : ''}</span></li>`).join('')
+        : '<li class="empty-li">남은 할 일이 없습니다. [＋ 업무 지시]로 맡기세요.</li>';
+    }
+    await Promise.all([loadFinance(), loadTasks()]);
+  }
 })().catch(e => console.warn(e.message));
 </script>
 </body>

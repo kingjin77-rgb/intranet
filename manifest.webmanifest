@@ -1,18 +1,33 @@
 {
   "name": "제이엘 인트라넷",
   "short_name": "인트라넷",
-  "description": "제안서·자료 공유, 열람확인, 코멘트, 컨펌",
+  "description": "사건·문서·컨펌·업무·일정·상담·공지를 한곳에서",
   "lang": "ko",
   "id": "./",
-  "start_url": "./index.html",
+  "start_url": "./home.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
   "theme_color": "#1a4f8a",
   "background_color": "#f0f4f9",
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }
