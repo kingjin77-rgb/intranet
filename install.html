@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>앱 설치 · 제이엘 인트라넷</title>
+<meta property="og:title" content="제이엘 인트라넷 앱 설치">
+<meta property="og:description" content="눌러서 휴대폰 홈 화면에 인트라넷 앱을 설치하세요">
+<meta property="og:image" content="icons/icon-512.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1a4f8a">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="인트라넷">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="style.css?v=3.2.0">
+<style>
+  .inst { max-width: 480px; margin: 0 auto; padding: 24px 16px 120px; }
+  .inst-hero { text-align: center; margin: 8px 0 20px; }
+  .inst-hero img { width: 88px; height: 88px; border-radius: 22px; box-shadow: 0 6px 20px rgba(26,79,138,.25); }
+  .inst-hero h1 { font-size: 22px; margin: 14px 0 4px; }
+  .inst-hero p { color: var(--text-muted); margin: 0; font-size: 14px; }
+  .big-btn { display: block; width: 100%; padding: 16px; font-size: 18px; font-weight: 700; border-radius: 14px;
+    border: 0; background: var(--primary); color: #fff; text-align: center; cursor: pointer; font-family: inherit; }
+  .big-btn:active { transform: scale(.98); }
+  .big-btn.ghost { background: #fff; color: var(--primary); border: 1px solid var(--border); font-size: 15px; padding: 12px; margin-top: 10px; }
+  .isteps { list-style: none; padding: 0; margin: 0; counter-reset: s; }
+  .isteps li { counter-increment: s; display: flex; gap: 12px; align-items: flex-start; padding: 14px 0; border-bottom: 1px solid var(--border); }
+  .isteps li:last-child { border-bottom: 0; }
+  .isteps li::before { content: counter(s); flex: 0 0 28px; height: 28px; border-radius: 50%; background: var(--primary);
+    color: #fff; font-weight: 700; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+  .isteps .body { flex: 1; min-width: 0; font-size: 15px; line-height: 1.5; }
+  .mock { margin-top: 8px; background: #f5f7fb; border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px;
+    font-size: 14px; display: flex; align-items: center; gap: 10px; }
+  .mock .hl { background: #fff3cd; border-radius: 8px; padding: 4px 8px; font-weight: 700; }
+  .mock .ico { width: 26px; height: 26px; flex: 0 0 26px; }
+  .mockbar { display: flex; justify-content: space-around; align-items: center; }
+  .mockbar span { opacity: .35; font-size: 18px; }
+  .mockbar .on { opacity: 1; outline: 3px solid #f59e0b; border-radius: 8px; padding: 2px 6px; }
+  .done-box { text-align: center; padding: 8px 0; }
+  .done-box .big { font-size: 44px; }
+  .after { font-size: 14px; color: var(--text-muted); }
+  .after li { margin: 4px 0; }
+  .qr { display: block; width: 220px; height: 220px; margin: 8px auto; image-rendering: pixelated; }
+  .pointer { position: fixed; left: 50%; bottom: 8px; transform: translateX(-50%); font-size: 40px;
+    animation: bob 1s ease-in-out infinite; pointer-events: none; z-index: 50; }
+  .pointer.top-right { left: auto; right: 14px; bottom: auto; top: 6px; transform: rotate(180deg); }
+  @keyframes bob { 0%,100% { margin-bottom: 0; } 50% { margin-bottom: 10px; } }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main class="inst">
+  <div class="inst-hero">
+    <img src="icons/icon-192.png" alt="">
+    <h1>제이엘 인트라넷 앱 설치</h1>
+    <p>홈 화면 아이콘으로 바로 열고, 새 문서·코멘트·컨펌 알림을 받으세요</p>
+  </div>
+
+  <!-- 이미 앱으로 실행 중 -->
+  <section class="card" data-view="installed" hidden>
+    <div class="done-box"><div class="big">✅</div><h2>앱으로 실행 중입니다</h2>
+      <p class="muted">설치가 끝났어요. 처음이면 로그인하고 🔔 알림을 켜 주세요.</p></div>
+    <a class="big-btn" href="home.html">인트라넷 열기</a>
+  </section>
+
+  <!-- 방금 설치함 (안드로이드) -->
+  <section class="card" data-view="justInstalled" hidden>
+    <div class="done-box"><div class="big">🎉</div><h2>설치 완료!</h2>
+      <p class="muted">홈 화면에 생긴 <b>인트라넷</b> 아이콘을 눌러 여세요.</p></div>
+  </section>
+
+  <!-- 카카오톡 안에서 연 경우 -->
+  <section class="card" data-view="kakao" hidden>
+    <h2 id="kakaoTitle">먼저 크롬으로 열어 주세요</h2>
+    <p class="muted">카카오톡 안에서는 앱 설치가 안 됩니다. 아래 버튼을 누르면 <span data-browser>크롬</span>에서 이 화면이 다시 열립니다.</p>
+    <a class="big-btn" id="openExternal" href="#"><span data-browser>크롬</span>으로 열기</a>
+    <p class="muted" style="margin-top:12px;font-size:13px" data-kakao-manual>
+      버튼이 안 되면: 오른쪽 <span data-kakao-where>위 ⋮</span> 메뉴 → <b data-kakao-menu>다른 브라우저로 열기</b>
+    </p>
+  </section>
+
+  <!-- 안드로이드: 설치 버튼 -->
+  <section class="card" data-view="androidPrompt" hidden>
+    <button class="big-btn" id="installBtn">📲 앱 설치하기</button>
+    <p class="muted" style="text-align:center;margin:10px 0 0;font-size:13px">누른 뒤 뜨는 창에서 <b>설치</b>를 누르세요</p>
+  </section>
+
+  <!-- 안드로이드: 메뉴로 설치 -->
+  <section class="card" data-view="androidManual" hidden>
+    <h2>3단계로 설치</h2>
+    <ol class="isteps">
+      <li><div class="body"><span data-and="chrome">오른쪽 <b>위</b> <b>⋮</b> (점 3개)를 누르세요</span><span data-and="samsung">아래쪽 <b>≡</b> (메뉴)를 누르세요</span>
+        <div class="mock mockbar" data-and="chrome"><span>🏠</span><span>🔒 kingjin77-rgb.github.io</span><span class="on">⋮</span></div>
+        <div class="mock mockbar" data-and="samsung"><span>◀</span><span>▶</span><span>🏠</span><span>🗂</span><span class="on">≡</span></div></div></li>
+      <li><div class="body"><span data-and="chrome"><b>앱 설치</b> 또는 <b>홈 화면에 추가</b>를 누르세요</span><span data-and="samsung"><b>현재 페이지 추가</b> → <b>홈 화면</b>을 누르세요</span>
+        <div class="mock"><span class="hl" data-and="chrome">📲 앱 설치</span><span class="hl" data-and="samsung">＋ 현재 페이지 추가</span></div></div></li>
+      <li><div class="body"><b>설치</b>(또는 <b>추가</b>)를 누르면 홈 화면에 <b>인트라넷</b> 아이콘이 생깁니다</div></li>
+    </ol>
+  </section>
+
+  <!-- 아이폰 사파리 -->
+  <section class="card" data-view="ios" hidden>
+    <h2>3단계로 설치</h2>
+    <ol class="isteps">
+      <li><div class="body"><span data-ios="safari">화면 <b>아래 가운데</b> 공유 버튼을 누르세요</span><span data-ios="chrome">주소창 <b>오른쪽</b> 공유 버튼을 누르세요</span>
+        <div class="mock mockbar" data-ios="safari"><span>‹</span><span>›</span><span class="on">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="#1a73e8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M12 3v12"/><path d="M8 7l4-4 4 4"/><path d="M5 11v9h14v-9"/></svg></span><span>📖</span><span>⧉</span></div>
+        <div class="mock mockbar" data-ios="chrome"><span>🔒 kingjin77-rgb.github.io</span><span class="on">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="#1a73e8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M12 3v12"/><path d="M8 7l4-4 4 4"/><path d="M5 11v9h14v-9"/></svg></span></div>
+        <p class="muted" style="font-size:13px;margin:6px 0 0" data-ios="safari">아래 막대가 안 보이면 화면을 살짝 위로 올려 보세요</p></div></li>
+      <li><div class="body">메뉴를 위로 밀어 <b>홈 화면에 추가</b>를 누르세요
+        <div class="mock"><span class="hl">⊞ 홈 화면에 추가</span></div></div></li>
+      <li><div class="body">오른쪽 위 <b>추가</b>를 누르면 홈 화면에 <b>인트라넷</b> 아이콘이 생깁니다
+        <div class="mock" style="justify-content:space-between"><span>취소</span><b>홈 화면에 추가</b><span class="hl">추가</span></div></div></li>
+    </ol>
+  </section>
+
+  <!-- 아이폰의 다른 브라우저(네이버 앱 등) -->
+  <section class="card" data-view="iosOther" hidden>
+    <h2>Safari로 열어 주세요</h2>
+    <p class="muted">아이폰은 <b>Safari</b>에서만 앱 설치가 됩니다. 아래 버튼으로 주소를 복사한 뒤 Safari 주소창에 붙여넣으세요.</p>
+    <button class="big-btn" id="copyLink">🔗 주소 복사</button>
+  </section>
+
+  <!-- PC -->
+  <section class="card" data-view="desktop" hidden>
+    <h2>📱 휴대폰 카메라로 찍으세요</h2>
+    <p class="muted">휴대폰 기본 카메라로 아래 QR을 비추면 설치 화면이 열립니다.</p>
+    <img class="qr" src="icons/install-qr.png" alt="설치 QR 코드">
+    <p class="muted" style="text-align:center;font-size:13px">또는 카톡에 이 주소를 보내세요<br><b id="selfUrl"></b></p>
+    <a class="big-btn ghost" href="help.html">💻 PC용 설치(크롬 확장프로그램) 안내</a>
+  </section>
+
+  <!-- 설치 후 할 일 -->
+  <section class="card after" data-after hidden>
+    <b>설치한 다음</b>
+    <ol>
+      <li>홈 화면의 <b>인트라넷</b> 아이콘으로 열기</li>
+      <li>로그인 (처음 한 번만 — 이메일 + 비밀번호)</li>
+      <li>위쪽 <b>🔔 알림 켜기</b> → <b>허용</b></li>
+    </ol>
+    <p style="margin:6px 0 0">문제가 있으면 <a href="help.html">자세한 안내</a>를 보세요.</p>
+  </section>
+</main>
+<div class="pointer" id="pointer" hidden>👇</div>
+<script>
+(() => {
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  const ua = navigator.userAgent;
+  const isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/.test(ua);
+  const isKakao = /KAKAOTALK/i.test(ua);
+  const isInApp = isKakao || /NAVER|Instagram|FBAN|FBAV|Line\/|DaumApps|everytimeApp/i.test(ua);
+  const isSamsung = /SamsungBrowser/.test(ua);
+  const isIOSChrome = isIOS && /CriOS/.test(ua);
+  const isIOSOther = isIOS && /FxiOS|EdgiOS|Whale|NAVER/.test(ua);
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const self = location.href.split('#')[0];
+
+  const show = (name) => {
+    document.querySelectorAll('[data-view]').forEach(s => (s.hidden = s.dataset.view !== name));
+    document.querySelector('[data-after]').hidden = ['installed', 'desktop', 'kakao', 'iosOther'].includes(name);
+    const ptr = document.getElementById('pointer');
+    ptr.hidden = name !== 'ios' && !(name === 'androidManual' && !isSamsung);
+    ptr.classList.toggle('top-right', name === 'androidManual' || (name === 'ios' && isIOSChrome));
+  };
+  const pick = (attr, val) => document.querySelectorAll(`[${attr}]`).forEach(e => (e.hidden = e.getAttribute(attr) !== val));
+
+  document.getElementById('selfUrl').textContent = self;
+
+  if (standalone) return show('installed');
+
+  if (isInApp && (isIOS || isAndroid)) {
+    const btn = document.getElementById('openExternal');
+    const browser = isIOS ? 'Safari' : '크롬';
+    document.querySelectorAll('[data-browser]').forEach(e => (e.textContent = browser));
+    document.getElementById('kakaoTitle').textContent = isIOS ? '먼저 Safari로 열어 주세요' : '먼저 크롬으로 열어 주세요';
+    if (isIOS) {
+      document.querySelector('[data-kakao-where]').textContent = '아래 ⋯';
+      document.querySelector('[data-kakao-menu]').textContent = 'Safari로 열기';
+    }
+    const target = isIOS
+      ? (isKakao ? 'kakaotalk://web/openExternal?url=' + encodeURIComponent(self) : null)
+      : 'intent://' + self.replace(/^https?:\/\//, '') + '#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=' + encodeURIComponent(self) + ';end';
+    if (target) {
+      btn.href = target;
+      // 카톡에서 열자마자 한 번 자동으로 넘겨 본다 (안 되면 버튼·메뉴 안내가 남아 있음)
+      setTimeout(() => { location.href = target; }, 400);
+    } else {
+      btn.hidden = true;
+    }
+    return show('kakao');
+  }
+
+  if (isIOS) {
+    if (isIOSOther) {
+      document.getElementById('copyLink').onclick = async () => {
+        try { await navigator.clipboard.writeText(self); } catch { prompt('아래 주소를 복사하세요', self); return; }
+        document.getElementById('copyLink').textContent = '✅ 복사됨 — Safari에 붙여넣으세요';
+      };
+      return show('iosOther');
+    }
+    pick('data-ios', isIOSChrome ? 'chrome' : 'safari');
+    return show('ios');
+  }
+
+  if (isAndroid) {
+    pick('data-and', isSamsung ? 'samsung' : 'chrome');
+    show('androidManual');
+    let deferred = null;
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferred = e;
+      show('androidPrompt');
+    });
+    document.getElementById('installBtn').onclick = async () => {
+      if (!deferred) return show('androidManual');
+      deferred.prompt();
+      const r = await deferred.userChoice.catch(() => null);
+      deferred = null;
+      show(r && r.outcome === 'accepted' ? 'justInstalled' : 'androidManual');
+    };
+    window.addEventListener('appinstalled', () => show('justInstalled'));
+    return;
+  }
+
+  show('desktop');
+})();
+</script>
+</body>
+</html>
