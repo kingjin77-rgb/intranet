@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>사건 · 사내 인트라넷</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1a4f8a">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="인트라넷">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="style.css?v=2.0.0">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
+<script src="config.js?v=2.0.0"></script>
+<script src="app.js?v=2.0.0"></script>
+</head>
+<body>
+<main class="container">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <div style="flex:1;min-width:0">
+      <div class="page-title">사건</div>
+      <p class="muted">문서·컨펌·일정·비용을 사건(현장) 단위로 모아 봅니다.</p>
+    </div>
+    <button class="btn" id="newBtn">＋ 새 사건</button>
+  </div>
+  <div id="v2"></div>
+
+  <form class="card" id="newForm" hidden style="margin-top:16px">
+    <h2>새 사건</h2>
+    <div class="grid2">
+      <div><label for="cName">사건명 / 현장명</label><input type="text" id="cName" required maxlength="100" placeholder="예) ○○건설 리모델링"></div>
+      <div><label for="cClient">의뢰인</label><input type="text" id="cClient" maxlength="100"></div>
+      <div><label for="cCourt">법원 / 기관 (선택)</label><input type="text" id="cCourt" maxlength="100" placeholder="예) 서울중앙지방법원"></div>
+      <div><label for="cNo">사건번호 (선택)</label><input type="text" id="cNo" maxlength="50" placeholder="예) 2026가합1234"></div>
+    </div>
+    <label for="cMemo">메모 (선택)</label>
+    <textarea id="cMemo" maxlength="2000"></textarea>
+    <div class="btn-row"><button class="btn" type="submit">등록</button><button class="btn ghost" type="button" id="cancelNew">취소</button></div>
+  </form>
+
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-tab="open">진행중</button>
+    <button class="tab" data-tab="closed">종결</button>
+  </div>
+  <input type="text" id="search" placeholder="사건명·의뢰인·사건번호 검색" style="margin-bottom:12px">
+  <div class="doc-list" id="list"><div class="empty">불러오는 중…</div></div>
+</main>
+<script>
+(async () => {
+  const { sb, esc, fmtDate, toast, errMsg } = App;
+  const me = await App.requireAuth();
+  if (!(await App.hasV2())) { document.getElementById('v2').innerHTML = App.V2_NOTICE; document.getElementById('list').innerHTML = ''; return; }
+
+  let cases = [], counts = {}, nextEvent = {}, tab = 'open';
+  async function load() {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const [c, d, e] = await Promise.all([
+      sb.from('cases').select('*').order('created_at', { ascending: false }),
+      sb.from('document_summary').select('case_id').eq('is_latest', true).not('case_id', 'is', null),
+      sb.from('events').select('case_id,title,starts_at').gte('starts_at', today.toISOString()).order('starts_at'),
+    ]);
+    const err = c.error || d.error || e.error;
+    if (err) return toast(errMsg(err), true);
+    cases = c.data;
+    counts = {}; d.data.forEach(r => (counts[r.case_id] = (counts[r.case_id] || 0) + 1));
+    nextEvent = {}; e.data.forEach(r => { if (r.case_id && !nextEvent[r.case_id]) nextEvent[r.case_id] = r; });
+    render();
+  }
+
+  function render() {
+    const q = document.getElementById('search').value.trim().toLowerCase();
+    const rows = cases.filter(c => c.status === tab)
+      .filter(c => !q || [c.name, c.client, c.case_no, c.court].some(v => (v || '').toLowerCase().includes(q)));
+    const list = document.getElementById('list');
+    if (!rows.length) { list.innerHTML = `<div class="empty">${tab === 'open' ? '진행중인 사건이 없습니다. [＋ 새 사건]으로 등록하세요.' : '종결된 사건이 없습니다.'}</div>`; return; }
+    list.innerHTML = rows.map(c => {
+      const ev = nextEvent[c.id];
+      return `<a class="doc-item" href="case.html?id=${encodeURIComponent(c.id)}">
+        <div class="row1"><span>⚖️</span><span class="title">${esc(c.name)}</span>
+          ${ev ? `<span class="badge myturn">${App.dday(ev.starts_at)}</span>` : ''}</div>
+        <div class="meta">
+          ${c.client ? `<span>👤 ${esc(c.client)}</span>` : ''}
+          ${c.case_no ? `<span>${esc(c.case_no)}</span>` : ''}
+          <span>📄 문서 ${counts[c.id] || 0}</span>
+          ${ev ? `<span>📅 ${esc(ev.title)} ${fmtDate(ev.starts_at)}</span>` : ''}
+        </div></a>`;
+    }).join('');
+  }
+
+  const form = document.getElementById('newForm');
+  document.getElementById('newBtn').onclick = () => { form.hidden = false; document.getElementById('cName').focus(); };
+  document.getElementById('cancelNew').onclick = () => { form.hidden = true; };
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const v = id => document.getElementById(id).value.trim() || null;
+    const { data, error } = await sb.from('cases').insert({
+      name: v('cName'), client: v('cClient'), court: v('cCourt'), case_no: v('cNo'), memo: v('cMemo'), created_by: me.id,
+    }).select('id').single();
+    if (error) return toast(errMsg(error), true);
+    location.href = `case.html?id=${encodeURIComponent(data.id)}`;
+  };
+  document.getElementById('tabs').onclick = (e) => {
+    const b = e.target.closest('.tab'); if (!b) return;
+    tab = b.dataset.tab;
+    document.querySelectorAll('#tabs .tab').forEach(t => t.classList.toggle('active', t === b));
+    render();
+  };
+  document.getElementById('search').oninput = render;
+  await load();
+})().catch(e => console.warn(e.message));
+</script>
+</body>
+</html>

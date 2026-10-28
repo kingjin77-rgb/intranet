@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>사건 · 사내 인트라넷</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1a4f8a">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="인트라넷">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="style.css?v=2.0.0">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
+<script src="config.js?v=2.0.0"></script>
+<script src="app.js?v=2.0.0"></script>
+</head>
+<body>
+<main class="container">
+  <div id="v2"></div>
+  <div class="card" id="infoCard">
+    <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">
+      <div style="flex:1;min-width:0">
+        <div class="muted"><a href="cases.html">← 사건 목록</a></div>
+        <div class="page-title" id="cTitle">불러오는 중…</div>
+        <p class="muted" id="cMeta"></p>
+      </div>
+      <span id="cStatus"></span>
+    </div>
+    <p id="cMemo" style="margin-top:8px;white-space:pre-wrap;overflow-wrap:anywhere"></p>
+    <div class="btn-row">
+      <a class="btn" id="addDoc">＋ 문서 올리기</a>
+      <a class="btn ghost" id="addForm">＋ 양식 작성</a>
+      <a class="btn ghost" id="addEvent">＋ 일정</a>
+      <button class="btn ghost" id="editBtn">수정</button>
+      <button class="btn ghost" id="statusBtn"></button>
+      <button class="btn ghost" id="delBtn" hidden style="color:var(--bad)">삭제</button>
+    </div>
+    <form id="editForm" hidden style="margin-top:12px">
+      <div class="grid2">
+        <div><label>사건명 / 현장명</label><input type="text" name="name" required maxlength="100"></div>
+        <div><label>의뢰인</label><input type="text" name="client" maxlength="100"></div>
+        <div><label>법원 / 기관</label><input type="text" name="court" maxlength="100"></div>
+        <div><label>사건번호</label><input type="text" name="case_no" maxlength="50"></div>
+      </div>
+      <label>메모</label><textarea name="memo" maxlength="2000"></textarea>
+      <div class="btn-row"><button class="btn" type="submit">저장</button><button class="btn ghost" type="button" id="cancelEdit">취소</button></div>
+    </form>
+  </div>
+
+  <div class="detail-grid">
+    <div>
+      <div class="card">
+        <h2>📄 문서·양식 <span class="count" id="docCount"></span></h2>
+        <div class="doc-list" id="docs"></div>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <h2>💰 비용 (컨펌완료 지급품의)</h2>
+        <div class="stat" id="cost">-</div>
+        <p class="muted" id="costNote"></p>
+      </div>
+      <div class="card">
+        <h2>📅 다가오는 일정</h2>
+        <ul class="people" id="events"></ul>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+(async () => {
+  const { sb, esc, fmtDate, statusBadge, toast, errMsg, fileIcon } = App;
+  const me = await App.requireAuth();
+  if (!(await App.hasV2())) { document.querySelector('main').innerHTML = App.V2_NOTICE; return; }
+  const id = new URLSearchParams(location.search).get('id');
+  let c;
+
+  async function loadInfo() {
+    const { data } = await sb.from('cases').select('*').eq('id', id).maybeSingle();
+    if (!data) { document.querySelector('main').innerHTML = '<div class="card"><h2>사건을 찾을 수 없습니다</h2><div class="btn-row"><a class="btn" href="cases.html">사건 목록</a></div></div>'; return false; }
+    c = data;
+    document.title = `${c.name} · 사내 인트라넷`;
+    document.getElementById('cTitle').textContent = c.name;
+    document.getElementById('cMeta').textContent = [c.client && `의뢰인 ${c.client}`, c.court, c.case_no].filter(Boolean).join(' · ');
+    document.getElementById('cMemo').textContent = c.memo || '';
+    document.getElementById('cStatus').innerHTML = c.status === 'open' ? '<span class="badge pending">진행중</span>' : '<span class="badge none">종결</span>';
+    document.getElementById('statusBtn').textContent = c.status === 'open' ? '종결 처리' : '다시 진행';
+    document.getElementById('delBtn').hidden = !(c.created_by === me.id || me.role === 'admin');
+    return true;
+  }
+  if (!(await loadInfo())) return;
+  const q = encodeURIComponent(id);
+  document.getElementById('addDoc').href = `upload.html?case=${q}`;
+  document.getElementById('addForm').href = `upload.html?case=${q}&mode=form`;
+  document.getElementById('addEvent').href = `calendar.html?case=${q}&new=1`;
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const [docs, costs, evs] = await Promise.all([
+    sb.from('document_summary').select('*').eq('case_id', id).eq('is_latest', true).order('created_at', { ascending: false }),
+    sb.from('case_costs').select('*').eq('case_id', id).maybeSingle(),
+    sb.from('events').select('*').eq('case_id', id).gte('starts_at', today.toISOString()).order('starts_at'),
+  ]);
+  const list = docs.data || [];
+  document.getElementById('docCount').textContent = list.length ? `${list.length}건` : '';
+  document.getElementById('docs').innerHTML = list.length ? list.map(d => `
+    <a class="doc-item" href="doc.html?id=${encodeURIComponent(d.id)}">
+      <div class="row1"><span>${d.kind === 'form' ? '📝' : fileIcon(d.file_type, d.file_name)}</span>
+        <span class="title">${esc(d.title)}</span>
+        ${d.version > 1 ? `<span class="badge none">v${d.version}</span>` : ''}${statusBadge(d.status)}</div>
+      <div class="meta"><span>${esc(d.uploader_name)} · ${fmtDate(d.created_at)}</span>
+        ${d.kind === 'form' && d.form && d.form.amount ? `<span>💰 ${App.fmtWon(d.form.amount)}</span>` : ''}</div>
+    </a>`).join('') : '<p class="muted">아직 이 사건에 올린 문서가 없습니다.</p>';
+  const cost = costs.data;
+  document.getElementById('cost').textContent = App.fmtWon(cost ? cost.approved_amount : 0);
+  document.getElementById('costNote').textContent = cost ? `지급품의서 ${cost.approved_count}건 합계` : '컨펌완료된 지급품의서가 없습니다.';
+  const e = evs.data || [];
+  document.getElementById('events').innerHTML = e.length ? e.map(x => `
+    <li><span><span class="badge ev-${x.kind}">${App.EVENT_KIND[x.kind]}</span> ${esc(x.title)}</span>
+      <span class="when">${App.dday(x.starts_at)} · ${x.all_day ? `${new Date(x.starts_at).getMonth() + 1}/${new Date(x.starts_at).getDate()}` : fmtDate(x.starts_at)}</span></li>`).join('')
+    : '<li class="muted">예정된 일정이 없습니다.</li>';
+
+  const form = document.getElementById('editForm');
+  document.getElementById('editBtn').onclick = () => {
+    ['name', 'client', 'court', 'case_no', 'memo'].forEach(k => (form.elements[k].value = c[k] || ''));
+    form.hidden = false;
+  };
+  document.getElementById('cancelEdit').onclick = () => (form.hidden = true);
+  form.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const patch = {};
+    ['name', 'client', 'court', 'case_no', 'memo'].forEach(k => (patch[k] = form.elements[k].value.trim() || null));
+    const { error } = await sb.from('cases').update(patch).eq('id', id);
+    if (error) return toast(errMsg(error), true);
+    form.hidden = true; toast('저장했습니다.'); loadInfo();
+  };
+  document.getElementById('statusBtn').onclick = async () => {
+    const { error } = await sb.from('cases').update({ status: c.status === 'open' ? 'closed' : 'open' }).eq('id', id);
+    if (error) return toast(errMsg(error), true);
+    loadInfo();
+  };
+  document.getElementById('delBtn').onclick = async () => {
+    if (!confirm('사건을 삭제할까요? 문서·일정은 지워지지 않고 사건 연결만 풀립니다.')) return;
+    const { error } = await sb.from('cases').delete().eq('id', id);
+    if (error) return toast(errMsg(error), true);
+    location.replace('cases.html');
+  };
+})().catch(e => console.warn(e.message));
+</script>
+</body>
+</html>
