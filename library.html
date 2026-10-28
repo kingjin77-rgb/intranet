@@ -12,10 +12,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=3.2.0">
+<link rel="stylesheet" href="style.css?v=3.3.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=3.2.0"></script>
-<script src="app.js?v=3.2.0"></script>
+<script src="config.js?v=3.3.0"></script>
+<script src="app.js?v=3.3.0"></script>
 </head>
 <body>
 <main class="container">
@@ -108,7 +108,7 @@
     const ext = (f.name.match(/\.([A-Za-z0-9]{1,8})$/) || [, 'bin'])[1].toLowerCase();
     const rand = crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
     const path = `${me.id}/tpl-${rand}.${ext}`;
-    const up = await sb.storage.from('docs').upload(path, f, { contentType: f.type || 'application/octet-stream' });
+    const up = await App.uploadFile(path, f);
     if (up.error) { btn.disabled = false; return toast(errMsg(up.error), true); }
     const { error } = await sb.from('templates').insert({
       title: document.getElementById('tTitle').value.trim(), category: document.getElementById('tCat').value,
