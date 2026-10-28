@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '3.2.0';
+  const APP_VERSION = '3.3.0';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -56,8 +56,32 @@
     if (m.includes('Database error saving new user') || m.includes('초대되지 않은')) return '초대되지 않은 이메일입니다. 관리자에게 등록을 요청하세요.';
     if (m.includes('Token has expired') || m.includes('invalid')) return '인증 코드가 올바르지 않거나 만료되었습니다.';
     if (m.includes('rate limit')) return '요청이 너무 많습니다. 잠시 후 다시 시도하세요.';
+    if (/Failed to fetch|NetworkError|Load failed|NotReadable|could not be read/i.test(m) || (e && e.name === 'NotReadableError'))
+      return '파일을 보내지 못했습니다. 인터넷 연결을 확인하고, 파일을 고른 뒤 워드·엑셀에서 다시 저장했다면 파일을 다시 선택해 주세요.';
     // 이미 설치된 DB 함수의 오류 문구도 화면 용어(컨펌)로 맞춘다
     return m.replace(/결재/g, '컨펌');
+  }
+
+  // 고른 파일을 그 자리에서 메모리로 복사해 둔다.
+  // (파일을 고른 뒤 워드에서 다시 저장하거나, 원드라이브 '온라인 전용' 파일이면 올릴 때 "Failed to fetch" 가 난다)
+  async function snapshotFile(f) {
+    try {
+      const buf = await f.arrayBuffer();
+      return new File([buf], f.name, { type: f.type, lastModified: f.lastModified });
+    } catch {
+      throw new Error('파일을 읽을 수 없습니다. 워드·엑셀에서 파일을 닫거나 저장을 마친 뒤, 파일을 다시 선택해 주세요. (원드라이브 파일이면 내 PC에 내려받은 뒤 선택)');
+    }
+  }
+
+  // 순간적인 네트워크 끊김이면 한 번 더 시도
+  async function uploadFile(path, f) {
+    const opts = { contentType: f.type || 'application/octet-stream' };
+    let r = await sb.storage.from('docs').upload(path, f, opts);
+    if (r.error && /Failed to fetch|NetworkError|Load failed/i.test(r.error.message || '')) {
+      await new Promise(res => setTimeout(res, 1500));
+      r = await sb.storage.from('docs').upload(path, f, opts);
+    }
+    return r;
   }
 
   async function copyText(text) {
@@ -272,7 +296,7 @@
       if (cm.error || vw.error) return;
       const status = Object.fromEntries(mine.data.map(d => [d.id, d.status]));
       if (st) {
-        cm.data.forEach(c => notify(`💬 ${(c.profiles && c.profiles.name) || ''}: ${(c.documents && c.documents.title) || ''}`, c.body.slice(0, 80), c.doc_id));
+        cm.data.forEach(c => notify(`💬 ${(c.profiles && c.profiles.name) || ''}: ${(c.documents && c.documents.title) || ''}`, (c.body || '📎 첨부').slice(0, 80), c.doc_id));
         vw.data.forEach(v => notify(`👀 ${(v.profiles && v.profiles.name) || ''}님이 확인했습니다`, (v.documents && v.documents.title) || '', v.doc_id));
         mine.data.filter(d => st.status[d.id] === 'pending' && d.status !== 'pending')
           .forEach(d => notify(d.status === 'approved' ? `🎉 최종 컨펌완료: ${d.title}` : `↩️ 반려: ${d.title}`, '', d.id));
@@ -493,5 +517,5 @@
     (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
   }
 
-  window.App = { sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, hasV3, V3_NOTICE, TASK_STATUS, CONSULT_STATUS, ymdLocal, ddayDate, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
+  window.App = { snapshotFile, uploadFile, sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, hasV3, V3_NOTICE, TASK_STATUS, CONSULT_STATUS, ymdLocal, ddayDate, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
 })();

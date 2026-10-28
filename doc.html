@@ -14,10 +14,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=3.2.0">
+<link rel="stylesheet" href="style.css?v=3.3.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=3.2.0"></script>
-<script src="app.js?v=3.2.0"></script>
+<script src="config.js?v=3.3.0"></script>
+<script src="app.js?v=3.3.0"></script>
 </head>
 <body>
 <main class="container">
@@ -52,10 +52,20 @@
       <div class="card" id="commentsCard">
         <h2>💬 코멘트 <span class="count" id="commentCount"></span></h2>
         <div class="comments" id="comments"></div>
-        <form class="comment-form" id="commentForm">
-          <input type="text" class="page" id="pageNo" inputmode="numeric" placeholder="쪽" title="해당 페이지 (선택)">
-          <textarea id="commentBody" placeholder="의견을 남겨주세요" maxlength="2000" required></textarea>
-          <button class="btn" type="submit">등록</button>
+        <form class="xc-form" id="commentForm">
+          <span id="myAvatar"></span>
+          <div class="xc-compose">
+            <textarea id="commentBody" placeholder="의견을 남겨주세요" maxlength="2000" rows="2"></textarea>
+            <div class="xc-files" id="pendingFiles"></div>
+            <div class="xc-tools">
+              <label class="xc-tool" id="attachBtn" title="파일·사진 첨부 (5개까지)">📎<input type="file" id="commentFiles" multiple hidden></label>
+              <button type="button" class="xc-tool" id="emojiBtn" title="이모지">😊</button>
+              <input type="text" class="xc-page" id="pageNo" inputmode="numeric" placeholder="쪽" title="해당 페이지 (선택)">
+              <span class="xc-hint" id="dropHint">사진은 붙여넣기(Ctrl+V)·끌어다 놓기도 돼요</span>
+              <button class="xc-post" type="submit" id="postBtn">게시</button>
+            </div>
+            <div class="xc-emoji" id="emojiPanel" hidden></div>
+          </div>
         </form>
       </div>
     </div>
@@ -66,7 +76,7 @@
         <ul class="people" id="versions"></ul>
       </div>
       <div class="card" id="approvalCard" hidden>
-        <h2>✍️ 컨펌</h2>
+        <h2>✍️ 컨펌 <span class="count" id="approvalProgress"></span></h2>
         <ul class="steps" id="steps"></ul>
         <form id="actForm" hidden>
           <textarea id="actComment" placeholder="컨펌 의견 (반려 시 필수)" maxlength="1000"></textarea>
@@ -274,10 +284,12 @@
     document.getElementById('steps').innerHTML = steps.map(st => `
       <li class="${st.state}">
         <span class="dot"></span>
-        <div class="who">${st.step_order}. ${esc(nameOf[st.approver_id] || '(퇴사자)')}${st.approver_id === me.id ? ' (나)' : ''}</div>
+        <div class="who">${esc(nameOf[st.approver_id] || '(퇴사자)')}${st.approver_id === me.id ? ' (나)' : ''}</div>
         <div class="note">${label[st.state]}${st.acted_at ? ' · ' + fmtDate(st.acted_at) : ''}</div>
         ${st.comment ? `<div class="say">${esc(st.comment)}</div>` : ''}
       </li>`).join('');
+    const done = steps.filter(st => st.state === 'approved').length;
+    document.getElementById('approvalProgress').textContent = steps.length > 1 ? `${steps.length}명 중 ${done}명 컨펌` : '';
     const mine = steps.find(st => st.state === 'current' && st.approver_id === me.id);
     document.getElementById('actForm').hidden = !mine;
   }
@@ -323,50 +335,268 @@
     copyText(`[확인 부탁드립니다] ${doc.title}\n아직 확인 안 하신 분: ${unseenNames.join(', ')}\n${docUrl}`);
 
   document.getElementById('shareBtn').onclick = () => {
-    const cur = steps.find(st => st.state === 'current');
+    const cur = steps.filter(st => st.state === 'current');
     const lines = [`[문서 확인 요청] ${doc.title}`];
     if (doc.description) lines.push(doc.description.split('\n')[0].slice(0, 80));
-    if (cur) lines.push(`컨펌 차례: ${nameOf[cur.approver_id] || ''}`);
+    if (cur.length) lines.push(`컨펌 요청: ${cur.map(st => nameOf[st.approver_id] || '').join(', ')}`);
     lines.push(docUrl);
     copyText(lines.join('\n'));
   };
 
-  // ----- 코멘트 -----
+  // ----- 코멘트 (X 스타일: 첨부파일 · 이모지 · 반응) -----
+  const REACTIONS = ['❤️', '👍', '😂', '😮', '🙏', '🔥', '👀', '✅'];
+  const EMOJIS = '😀 😂 🤣 😊 😍 🥰 😎 🤔 😅 😭 😡 😱 🥲 🙄 😴 🤝 👍 👎 👏 🙏 💪 👌 ✌️ 🙌 🔥 💯 ✅ ❌ ⚠️ ❗ ❓ 💡 📌 📎 📅 ⏰ 💰 📄 ⚖️ 🎉 ❤️ 💙 👀 ✍️ 🚀 ☕'.split(' ');
+  const MAX_FILES = 5, MAX_FILE = 50 * 1024 * 1024;
+  // 005 SQL 을 실행하기 전이면 첨부·반응은 숨기고 이모지 넣기만 쓴다
+  const hasV33 = sb.from('comment_reactions').select('comment_id', { head: true, count: 'exact' }).limit(1)
+    .then(r => !r.error, () => false);
+  let reactT, pending = [], groupDocs = null;
+
+  const AVATAR_COLORS = ['#1a4f8a', '#e8821a', '#15803d', '#7c3aed', '#be185d', '#0e7490', '#b45309', '#4d7c0f'];
+  function avatar(uid) {
+    const name = nameOf[uid] || '?';
+    let h = 0;
+    for (const ch of uid || '') h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return `<span class="xc-avatar" style="background:${AVATAR_COLORS[h % AVATAR_COLORS.length]}">${esc(name.slice(0, 1))}</span>`;
+  }
+  function ago(iso) {
+    const s = (Date.now() - new Date(iso)) / 1000;
+    if (s < 60) return '방금';
+    if (s < 3600) return `${Math.floor(s / 60)}분`;
+    if (s < 86400) return `${Math.floor(s / 3600)}시간`;
+    if (s < 7 * 86400) return `${Math.floor(s / 86400)}일`;
+    return fmtDate(iso).split(' ')[0];
+  }
+  // 글자는 모두 escape 한 뒤 링크와 @이름만 꾸민다
+  function fmtBody(t) {
+    return esc(t)
+      .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
+      .replace(/(^|\s)@([^\s@<]{1,20})/g, '$1<span class="xc-mention">@$2</span>');
+  }
+  const isImage = (f) => /^image\/(png|jpe?g|gif|webp)$/i.test(f.type || '') || /\.(png|jpe?g|gif|webp)$/i.test(f.name || '');
+
+  function renderFiles(c) {
+    const files = Array.isArray(c.attachments) ? c.attachments : [];
+    if (!files.length) return '';
+    const imgs = files.filter(isImage), others = files.filter(f => !isImage(f));
+    return `${imgs.length ? `<div class="xc-imgs n${Math.min(imgs.length, 4)}">${imgs.map(f =>
+      `<button type="button" class="xc-img" data-act="img" data-path="${esc(f.path)}" data-name="${esc(f.name)}"><img alt="${esc(f.name)}" data-src="${esc(f.path)}"></button>`).join('')}</div>` : ''}
+      ${others.map(f => `<button type="button" class="xc-file" data-act="file" data-path="${esc(f.path)}" data-name="${esc(f.name)}">
+        <span>${fileIcon(f.type, f.name)}</span><span class="nm">${esc(f.name)}</span><span class="sz">${fmtSize(f.size)}</span><span>⬇</span></button>`).join('')}`;
+  }
+
+  const urlCache = {};
+  async function signed(path, download) {
+    const key = path + (download ? '|d' : '');
+    if (urlCache[key]) return urlCache[key];
+    const { data, error } = await sb.storage.from('docs').createSignedUrl(path, 3600, download ? { download } : undefined);
+    if (error || !data) throw error || new Error('파일을 열 수 없습니다');
+    return (urlCache[key] = data.signedUrl);
+  }
+
   async function loadComments() {
-    const { data } = await sb.from('comments').select('*').eq('doc_id', docId).order('created_at');
+    const v33 = await hasV33;
+    // 수정본(v1·v2…)의 코멘트를 한 대화로 이어서 보여준다
+    if (!groupDocs) {
+      groupDocs = [doc];
+      if (doc.group_id) {
+        const g = await sb.from('documents').select('id,version,created_at,uploader_id').eq('group_id', doc.group_id).order('version');
+        if (!g.error && g.data && g.data.length) groupDocs = g.data;
+      }
+    }
+    const verOf = Object.fromEntries(groupDocs.map(d => [d.id, d.version || 1]));
+    const { data } = await sb.from('comments').select('*').in('doc_id', groupDocs.map(d => d.id)).order('created_at');
     const list = data || [];
-    document.getElementById('commentCount').textContent = list.length ? `${list.length}개` : '';
-    document.getElementById('comments').innerHTML = list.length ? list.map(c => `
-      <div class="comment">
-        <div class="head"><b>${esc(nameOf[c.user_id] || '(비활성)')}</b>
-          ${c.page_no ? `<span>p.${c.page_no}</span>` : ''}<span>${fmtDate(c.created_at)}</span>
-          ${c.user_id === me.id || me.role === 'admin' ? `<button class="del" data-id="${c.id}">삭제</button>` : ''}
+    let reacts = [];
+    if (v33 && list.length) {
+      const r = await sb.from('comment_reactions').select('comment_id,user_id,emoji').in('comment_id', list.map(c => c.id));
+      reacts = r.data || [];
+    }
+    document.getElementById('commentCount').textContent = list.length ? `${list.length}개${groupDocs.length > 1 ? ' · 모든 버전' : ''}` : '';
+    const box = document.getElementById('comments');
+    // 버전이 올라간 시점을 대화 사이에 구분선으로 넣는다
+    const timeline = [...list.map(c => ({ c, at: c.created_at }))];
+    if (groupDocs.length > 1) groupDocs.forEach(d => timeline.push({ v: d, at: d.created_at }));
+    timeline.sort((x, y) => new Date(x.at) - new Date(y.at));
+    box.innerHTML = list.length ? timeline.map(({ c, v }) => {
+      if (v) return `<div class="xc-ver${v.id === doc.id ? ' cur' : ''}"><span>📄 v${v.version || 1}${(v.version || 1) > 1 ? ' 수정본' : ''} 올림 · ${esc(nameOf[v.uploader_id] || '')} · ${esc(fmtDate(v.created_at))}${v.id === doc.id ? ' · 지금 보는 버전' : ''}</span></div>`;
+      const mineR = new Set(reacts.filter(r => r.comment_id === c.id && r.user_id === me.id).map(r => r.emoji));
+      const byEmoji = {};
+      reacts.filter(r => r.comment_id === c.id).forEach(r => (byEmoji[r.emoji] = byEmoji[r.emoji] || []).push(nameOf[r.user_id] || '?'));
+      const pills = REACTIONS.filter(e => byEmoji[e] || e === '❤️').map(e => `
+        <button type="button" class="xc-react${mineR.has(e) ? ' on' : ''}${e === '❤️' ? ' heart' : ''}" data-act="react" data-emoji="${e}"
+          title="${esc((byEmoji[e] || []).join(', '))}">${e === '❤️' && !mineR.has(e) ? '♡' : e}${byEmoji[e] ? `<span>${byEmoji[e].length}</span>` : ''}</button>`).join('');
+      return `
+      <article class="xc" data-id="${c.id}">
+        ${avatar(c.user_id)}
+        <div class="xc-main">
+          <div class="xc-head"><b>${esc(nameOf[c.user_id] || '(비활성)')}</b>
+            <span class="xc-time" title="${esc(fmtDate(c.created_at))}">· ${ago(c.created_at)}</span>
+            ${groupDocs.length > 1 ? `<a class="xc-vtag${c.doc_id === doc.id ? ' cur' : ''}" href="doc.html?id=${encodeURIComponent(c.doc_id)}" title="이 코멘트가 달린 버전">v${verOf[c.doc_id] || 1}</a>` : ''}
+            ${c.page_no ? `<span class="xc-pg">p.${c.page_no}</span>` : ''}
+            ${c.user_id === me.id || me.role === 'admin' ? `<button type="button" class="xc-del" data-act="del">삭제</button>` : ''}
+          </div>
+          ${c.body ? `<div class="xc-body">${fmtBody(c.body)}</div>` : ''}
+          ${renderFiles(c)}
+          <div class="xc-actions">
+            <button type="button" class="xc-act" data-act="reply" data-name="${esc(nameOf[c.user_id] || '')}">💬 답글</button>
+            ${v33 ? `${pills}
+            <span class="xc-pickwrap"><button type="button" class="xc-act" data-act="pick" title="반응 추가">＋😊</button>
+              <span class="xc-picker" hidden>${REACTIONS.map(e => `<button type="button" data-act="react" data-emoji="${e}">${e}</button>`).join('')}</span></span>` : ''}
+          </div>
         </div>
-        <div class="body">${esc(c.body)}</div>
-      </div>`).join('') : '<p class="muted">첫 의견을 남겨주세요.</p>';
+      </article>`;
+    }).join('') : '<p class="muted">첫 의견을 남겨주세요.</p>';
+    // 사진 썸네일은 서명된 주소로 채운다
+    box.querySelectorAll('img[data-src]').forEach(img => {
+      signed(img.dataset.src).then(u => (img.src = u)).catch(() => (img.alt = '⚠️ ' + img.alt));
+    });
+  }
+
+  function lightbox(src, name) {
+    const el = document.createElement('div');
+    el.className = 'xc-lightbox';
+    el.innerHTML = `<img alt=""><div class="cap"></div>`;
+    el.querySelector('img').src = src;
+    el.querySelector('.cap').textContent = `${name} · 누르면 닫힘`;
+    el.onclick = () => el.remove();
+    document.body.appendChild(el);
   }
 
   document.getElementById('comments').onclick = async (e) => {
-    const b = e.target.closest('.del');
-    if (!b || !confirm('코멘트를 삭제할까요?')) return;
-    const { error } = await sb.from('comments').delete().eq('id', b.dataset.id);
-    if (error) return toast(errMsg(error), true);
-    loadComments();
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    const art = b.closest('.xc');
+    const cid = art && art.dataset.id;
+    const act = b.dataset.act;
+    try {
+      if (act === 'reply') {
+        const ta = document.getElementById('commentBody');
+        ta.value = `@${b.dataset.name} ` + ta.value.replace(/^@\S+\s/, '');
+        ta.focus();
+        ta.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      } else if (act === 'pick') {
+        const pk = b.parentElement.querySelector('.xc-picker');
+        document.querySelectorAll('.xc-picker').forEach(p => p !== pk && (p.hidden = true));
+        pk.hidden = !pk.hidden;
+      } else if (act === 'react') {
+        const emoji = b.dataset.emoji;
+        const on = !!art.querySelector(`.xc-react.on[data-emoji="${emoji}"]`);
+        const { error } = on
+          ? await sb.from('comment_reactions').delete().eq('comment_id', cid).eq('user_id', me.id).eq('emoji', emoji)
+          : await sb.from('comment_reactions').insert({ comment_id: cid, user_id: me.id, emoji });
+        if (error) return toast(errMsg(error), true);
+        loadComments();
+      } else if (act === 'img') {
+        lightbox(await signed(b.dataset.path), b.dataset.name);
+      } else if (act === 'file') {
+        location.href = await signed(b.dataset.path, b.dataset.name);
+      } else if (act === 'del') {
+        if (!confirm('코멘트를 삭제할까요? 첨부파일도 함께 지워집니다.')) return;
+        const { data: c } = await sb.from('comments').select('attachments').eq('id', cid).maybeSingle();
+        const { error } = await sb.from('comments').delete().eq('id', cid);
+        if (error) return toast(errMsg(error), true);
+        const paths = ((c && c.attachments) || []).map(f => f.path);
+        if (paths.length) await sb.storage.from('docs').remove(paths).catch(() => {});
+        loadComments();
+      }
+    } catch (err) { toast(errMsg(err), true); }
   };
 
-  document.getElementById('commentForm').onsubmit = async (e) => {
+  // ----- 코멘트 입력창 -----
+  const form = document.getElementById('commentForm');
+  const ta = document.getElementById('commentBody');
+  document.getElementById('myAvatar').outerHTML = avatar(me.id);
+  const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 240) + 'px'; };
+  ta.addEventListener('input', grow);
+  ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) form.requestSubmit(); });
+
+  hasV33.then(ok => {
+    document.getElementById('attachBtn').hidden = !ok;
+    document.getElementById('dropHint').hidden = !ok;
+  });
+
+  function renderPending() {
+    const box = document.getElementById('pendingFiles');
+    box.innerHTML = pending.map((f, i) => `<span class="xc-chip">
+      ${isImage(f) ? `<img src="${URL.createObjectURL(f)}" alt="">` : `<span>${fileIcon(f.type, f.name)}</span>`}
+      <span class="nm">${esc(f.name)}</span><button type="button" data-i="${i}" aria-label="빼기">✕</button></span>`).join('');
+  }
+  document.getElementById('pendingFiles').onclick = (e) => {
+    const b = e.target.closest('button[data-i]');
+    if (b) { pending.splice(+b.dataset.i, 1); renderPending(); }
+  };
+  async function addFiles(files) {
+    if (!(await hasV33)) return;
+    for (const f of files) {
+      if (pending.length >= MAX_FILES) { toast(`첨부는 ${MAX_FILES}개까지 가능합니다.`, true); break; }
+      if (f.size > MAX_FILE) { toast(`${f.name}: 50MB 이하만 올릴 수 있습니다.`, true); continue; }
+      // 붙여넣은 캡처는 이름이 image.png 로 오므로 시간을 붙여 구분
+      let copy;
+      try { copy = await App.snapshotFile(f); } catch (err) { toast(err.message, true); continue; }
+      pending.push(f.name === 'image.png' ? new File([copy], `캡처_${new Date().toTimeString().slice(0, 8).replace(/:/g, '')}.png`, { type: f.type }) : copy);
+    }
+    renderPending();
+  }
+  document.getElementById('commentFiles').onchange = (e) => { addFiles([...e.target.files]); e.target.value = ''; };
+  ta.addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData && e.clipboardData.files || [])];
+    if (files.length) { e.preventDefault(); addFiles(files); }
+  });
+  form.addEventListener('dragover', (e) => { e.preventDefault(); form.classList.add('drag'); });
+  form.addEventListener('dragleave', () => form.classList.remove('drag'));
+  form.addEventListener('drop', (e) => { e.preventDefault(); form.classList.remove('drag'); addFiles([...e.dataTransfer.files]); });
+
+  const panel = document.getElementById('emojiPanel');
+  panel.innerHTML = EMOJIS.map(e => `<button type="button">${e}</button>`).join('');
+  document.getElementById('emojiBtn').onclick = () => { panel.hidden = !panel.hidden; };
+  panel.onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const at = ta.selectionStart ?? ta.value.length;
+    ta.value = ta.value.slice(0, at) + b.textContent + ta.value.slice(ta.selectionEnd ?? at);
+    ta.selectionStart = ta.selectionEnd = at + b.textContent.length;
+    ta.focus();
+    grow();
+  };
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#emojiPanel, #emojiBtn')) panel.hidden = true;
+    if (!e.target.closest('.xc-pickwrap')) document.querySelectorAll('.xc-picker').forEach(p => (p.hidden = true));
+  });
+
+  form.onsubmit = async (e) => {
     e.preventDefault();
-    const body = document.getElementById('commentBody');
+    const body = ta.value.trim();
     const page = parseInt(document.getElementById('pageNo').value, 10);
-    if (!body.value.trim()) return;
-    const btn = e.target.querySelector('button');
+    if (!body && !pending.length) return toast('의견을 쓰거나 파일을 붙여 주세요.', true);
+    const btn = document.getElementById('postBtn');
     btn.disabled = true;
-    const { error } = await sb.from('comments').insert({ doc_id: docId, user_id: me.id, body: body.value.trim(), page_no: Number.isFinite(page) ? page : null });
-    btn.disabled = false;
-    if (error) return toast(errMsg(error), true);
-    body.value = '';
-    document.getElementById('pageNo').value = '';
-    loadComments();
+    const uploaded = [];
+    try {
+      for (const f of pending) {
+        btn.textContent = `올리는 중 ${uploaded.length + 1}/${pending.length}`;
+        const ext = ((f.name.match(/\.([A-Za-z0-9]{1,8})$/) || [, 'bin'])[1]).toLowerCase();
+        const rand = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2);
+        const path = `${me.id}/c/${rand}.${ext}`;
+        const up = await App.uploadFile(path, f);
+        if (up.error) throw up.error;
+        uploaded.push({ path, name: f.name, type: f.type || ext, size: f.size });
+      }
+      const row = { doc_id: docId, user_id: me.id, body, page_no: Number.isFinite(page) ? page : null };
+      if (uploaded.length) row.attachments = uploaded;
+      const { error } = await sb.from('comments').insert(row);
+      if (error) throw error;
+      ta.value = ''; grow();
+      document.getElementById('pageNo').value = '';
+      pending = []; renderPending();
+      loadComments();
+    } catch (err) {
+      if (uploaded.length) await sb.storage.from('docs').remove(uploaded.map(u => u.path)).catch(() => {});
+      toast(errMsg(err), true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '게시';
+    }
   };
 
   // ----- 사건 · 버전 · 재상신 (v2) -----
@@ -411,13 +641,15 @@
     }
   }
 
-  await Promise.all([loadSteps(), loadViews(), loadComments()]);
+  // 한 카드가 실패해도 나머지는 그려지도록 따로 기다린다
   loadVersions().catch(e => console.warn(e));
+  await Promise.allSettled([loadSteps(), loadViews(), loadComments().catch(e => console.warn('코멘트 불러오기 실패', e))]);
 
   // 다른 사람의 코멘트·열람·컨펌를 실시간 반영
   const filter = `doc_id=eq.${docId}`;
   sb.channel(`doc-${docId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'comments', filter }, loadComments)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'comments' }, () => { clearTimeout(reactT); reactT = setTimeout(loadComments, 300); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'comment_reactions' }, () => { clearTimeout(reactT); reactT = setTimeout(loadComments, 300); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'document_views', filter }, loadViews)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'approval_steps', filter }, loadSteps)
     .subscribe();

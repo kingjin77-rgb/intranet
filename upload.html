@@ -12,10 +12,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=3.2.0">
+<link rel="stylesheet" href="style.css?v=3.3.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=3.2.0"></script>
-<script src="app.js?v=3.2.0"></script>
+<script src="config.js?v=3.3.0"></script>
+<script src="app.js?v=3.3.0"></script>
 </head>
 <body>
 <main class="container" style="max-width:640px">
@@ -67,7 +67,7 @@
     <label for="desc" id="descLabel">설명 / 요청사항 (선택)</label>
     <textarea id="desc" maxlength="4000" placeholder="예) 3페이지 단가표 확인 부탁드립니다. 금요일까지 컨펌 요청드립니다."></textarea>
 
-    <label>컨펌 순서 (순서대로 컨펌합니다 · 비워두면 컨펌 없이 공유만)</label>
+    <label>컨펌자 (동시에 요청 · 모두 컨펌하면 완료 · 비워두면 컨펌 없이 공유만)</label>
     <div style="display:flex;gap:8px">
       <select id="approverSelect"><option value="">컨펌자 선택…</option></select>
       <button class="btn ghost" type="button" id="addApprover">추가</button>
@@ -103,16 +103,15 @@
   function renderPicker() {
     document.getElementById('picker').innerHTML = approvers.map((id, i) => `
       <li>
-        <span class="n">${i + 1}</span>
+        <span class="n">✍️</span>
         <span class="grow">${esc(byId[id].name)} <span class="muted">${esc(byId[id].dept || '')}</span></span>
-        <button type="button" data-act="up" data-i="${i}" ${i === 0 ? 'disabled' : ''}>▲</button>
-        <button type="button" data-act="down" data-i="${i}" ${i === approvers.length - 1 ? 'disabled' : ''}>▼</button>
-        <button type="button" data-act="del" data-i="${i}">✕</button>
+        <button type="button" data-act="del" data-i="${i}" aria-label="빼기">✕</button>
       </li>`).join('');
     renderSelect();
   }
   renderSelect();
 
+  select.onchange = () => document.getElementById('addApprover').click();
   document.getElementById('addApprover').onclick = () => {
     if (!select.value) return;
     approvers.push(select.value);
@@ -123,10 +122,6 @@
     if (!b) return;
     const i = +b.dataset.i;
     if (b.dataset.act === 'del') approvers.splice(i, 1);
-    else {
-      const j = b.dataset.act === 'up' ? i - 1 : i + 1;
-      [approvers[i], approvers[j]] = [approvers[j], approvers[i]];
-    }
     renderPicker();
   };
 
@@ -210,8 +205,11 @@
     doc: '워드에서 <b>파일 → 다른 이름으로 저장 → 파일 형식: PDF</b>',
     hwp: '한글에서 <b>파일 → PDF로 저장하기</b>',
   };
+  let snap = null;
   fileInput.onchange = () => {
     const f = fileInput.files[0];
+    snap = f ? App.snapshotFile(f) : null;
+    if (snap) snap.catch(err => toast(err.message, true));
     const title = document.getElementById('title');
     if (f && !title.value) title.value = f.name.replace(/\.[^.]+$/, '');
 
@@ -275,8 +273,9 @@
       return location.replace(`doc.html?id=${encodeURIComponent(docId)}&new=1`);
     }
 
-    const f = fileInput.files[0];
-    if (!f) return toast('파일을 골라 주세요.', true);
+    if (!fileInput.files[0] || !snap) return toast('파일을 골라 주세요.', true);
+    let f;
+    try { f = await snap; } catch (err) { return toast(err.message, true); }
     if (f.size > MAX) return toast('50MB 이하 파일만 올릴 수 있습니다.', true);
     btn.disabled = true;
     progress.textContent = '파일 올리는 중…';
@@ -286,7 +285,7 @@
     const rand = crypto.randomUUID ? crypto.randomUUID()
       : Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
     const path = `${me.id}/${rand}.${ext}`;
-    const up = await sb.storage.from('docs').upload(path, f, { contentType: f.type || 'application/octet-stream' });
+    const up = await App.uploadFile(path, f);
     if (up.error) {
       btn.disabled = false;
       progress.textContent = '';
