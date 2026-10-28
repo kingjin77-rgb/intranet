@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>홈 · 사내 인트라넷</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1a4f8a">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="인트라넷">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="style.css?v=3.0.0">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
+<script src="config.js?v=3.0.0"></script>
+<script src="app.js?v=3.0.0"></script>
+</head>
+<body>
+<main class="container" style="max-width:1100px">
+  <div class="home-hello">
+    <div>
+      <div class="page-title" id="hello">안녕하세요</div>
+      <p class="muted" id="today"></p>
+    </div>
+    <div class="quick">
+      <a class="btn sm" href="upload.html">＋ 문서</a>
+      <a class="btn ghost sm" href="tasks.html?new=1">＋ 업무 지시</a>
+      <a class="btn ghost sm" href="calendar.html?new=1">＋ 일정</a>
+      <a class="btn ghost sm" href="consults.html?new=1">＋ 상담</a>
+    </div>
+  </div>
+
+  <div class="home-grid">
+    <section class="card"><h2>✍️ 내 컨펌 대기 <span class="count" id="cTurn"></span></h2><ul class="home-list" id="turn"></ul>
+      <a class="more" href="index.html?tab=myturn">문서함에서 보기 →</a></section>
+    <section class="card"><h2>📌 내 할 일 <span class="count" id="cTask"></span></h2><ul class="home-list" id="tasks"></ul>
+      <a class="more" href="tasks.html">업무 전체 →</a></section>
+    <section class="card"><h2>📅 7일 안의 일정 <span class="count" id="cEv"></span></h2><ul class="home-list" id="events"></ul>
+      <a class="more" href="calendar.html">달력 →</a></section>
+    <section class="card"><h2>📢 안 읽은 공지 <span class="count" id="cNotice"></span></h2><ul class="home-list" id="notices"></ul>
+      <a class="more" href="notices.html">공지 전체 →</a></section>
+    <section class="card"><h2>📞 연락할 상담 <span class="count" id="cCons"></span></h2><ul class="home-list" id="consults"></ul>
+      <a class="more" href="consults.html">상담 전체 →</a></section>
+    <section class="card"><h2>📄 최근 문서</h2><ul class="home-list" id="recent"></ul>
+      <a class="more" href="index.html">문서함 →</a></section>
+    <section class="card" id="moneyCard" hidden><h2>💰 수임료 현황 (진행 사건)</h2>
+      <div class="money">
+        <div><span>계약 합계</span><b id="mFee">-</b></div>
+        <div><span>입금 합계</span><b id="mPaid">-</b></div>
+        <div><span>미수금</span><b id="mUnpaid" class="bad-text">-</b></div>
+        <div><span>이번 달 입금</span><b id="mMonth">-</b></div>
+      </div>
+      <ul class="home-list" id="unpaidList" style="margin-top:10px"></ul>
+      <a class="more" href="cases.html">사건별로 보기 →</a></section>
+  </div>
+</main>
+<script>
+(async () => {
+  const { sb, esc, fmtDate, statusBadge, fileIcon } = App;
+  const me = await App.requireAuth();
+  const now = new Date();
+  document.getElementById('hello').textContent = `안녕하세요, ${me.name}님`;
+  document.getElementById('today').textContent = now.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
+  const [v2, v3] = await Promise.all([App.hasV2(), App.hasV3()]);
+  const empty = (msg) => `<li class="empty-li">${msg}</li>`;
+  const set = (id, html, count) => {
+    document.getElementById(id).innerHTML = html;
+    const c = { turn: 'cTurn', tasks: 'cTask', events: 'cEv', notices: 'cNotice', consults: 'cCons' }[id];
+    if (c) document.getElementById(c).textContent = count ? `${count}건` : '';
+  };
+  const today = App.ymdLocal(now);
+
+  // 내 컨펌 대기 + 최근 문서
+  sb.from('document_summary').select('*').order('created_at', { ascending: false }).then(({ data }) => {
+    const docs = (data || []).filter(d => d.is_latest !== false);
+    const turn = docs.filter(d => d.current_approver_id === me.id);
+    set('turn', turn.length ? turn.slice(0, 6).map(d => `<li><a href="doc.html?id=${encodeURIComponent(d.id)}">${d.kind === 'form' ? '📝' : fileIcon(d.file_type, d.file_name)} ${esc(d.title)}</a>
+      <span class="when">${esc(d.uploader_name || '')} · ${fmtDate(d.created_at)}</span></li>`).join('') : empty('컨펌할 문서가 없습니다 👍'), turn.length);
+    set('recent', docs.length ? docs.slice(0, 6).map(d => `<li><a href="doc.html?id=${encodeURIComponent(d.id)}">${esc(d.title)}</a>
+      <span class="when">${statusBadge(d.status)}</span></li>`).join('') : empty('아직 문서가 없습니다'));
+  });
+
+  // 일정
+  if (v2) {
+    const s = new Date(now); s.setHours(0, 0, 0, 0);
+    const e = new Date(s); e.setDate(e.getDate() + 8);
+    sb.from('events').select('*').gte('starts_at', s.toISOString()).lt('starts_at', e.toISOString()).order('starts_at').then(({ data }) => {
+      const list = data || [];
+      set('events', list.length ? list.map(x => `<li><span><span class="badge ev-${x.kind}">${App.EVENT_KIND[x.kind]}</span> ${esc(x.title)}</span>
+        <span class="when"><b>${App.dday(x.starts_at)}</b> · ${x.all_day ? `${new Date(x.starts_at).getMonth() + 1}/${new Date(x.starts_at).getDate()}` : fmtDate(x.starts_at)}</span></li>`).join('') : empty('7일 안에 일정이 없습니다'), list.length);
+    });
+  } else set('events', `<li>${App.V2_NOTICE}</li>`);
+
+  if (!v3) {
+    ['tasks', 'notices', 'consults'].forEach(id => set(id, `<li>${App.V3_NOTICE}</li>`));
+    return;
+  }
+  // 내 할 일
+  sb.from('tasks').select('*').eq('assignee_id', me.id).neq('status', 'done').order('due_date', { ascending: true }).then(({ data }) => {
+    const list = (data || []).sort((a, b) => (a.due_date || '9999') < (b.due_date || '9999') ? -1 : 1);
+    set('tasks', list.length ? list.slice(0, 7).map(t => {
+      const late = t.due_date && t.due_date < today;
+      return `<li><a href="tasks.html">${t.status === 'doing' ? '🔄' : '⬜'} ${esc(t.title)}</a>
+        <span class="when${late ? ' bad-text' : ''}">${t.due_date ? (late ? '마감 지남 ' : '') + App.ddayDate(t.due_date) : '마감 없음'}</span></li>`;
+    }).join('') : empty('남은 할 일이 없습니다 🎉'), list.length);
+  });
+  // 안 읽은 공지
+  Promise.all([
+    sb.from('notices').select('id,title,pinned,created_at,created_by').order('created_at', { ascending: false }).limit(30),
+    sb.from('notice_reads').select('notice_id').eq('user_id', me.id),
+  ]).then(([n, r]) => {
+    const read = new Set((r.data || []).map(x => x.notice_id));
+    const list = (n.data || []).filter(x => !read.has(x.id) && x.created_by !== me.id);
+    set('notices', list.length ? list.slice(0, 5).map(x => `<li><a href="notices.html#${x.id}">${x.pinned ? '📌 ' : ''}${esc(x.title)}</a>
+      <span class="when">${fmtDate(x.created_at)}</span></li>`).join('') : empty('새 공지가 없습니다'), list.length);
+  });
+  // 연락할 상담 (후속일 3일 안 또는 지남)
+  const soon = new Date(now); soon.setDate(soon.getDate() + 3);
+  sb.from('consultations').select('*').in('status', ['new', 'followup']).order('follow_up_date', { ascending: true }).then(({ data }) => {
+    const list = (data || []).filter(c => !c.follow_up_date || c.follow_up_date <= App.ymdLocal(soon));
+    set('consults', list.length ? list.slice(0, 6).map(c => `<li><a href="consults.html#${c.id}">${esc(c.client_name)}</a>
+      <span class="when${c.follow_up_date && c.follow_up_date < today ? ' bad-text' : ''}">${c.follow_up_date ? App.ddayDate(c.follow_up_date) : App.CONSULT_STATUS[c.status]}${c.phone ? ' · ' + esc(c.phone) : ''}</span></li>`).join('') : empty('연락할 상담이 없습니다'), list.length);
+  });
+  // 수임료 현황 (관리자)
+  if (me.role === 'admin') {
+    document.getElementById('moneyCard').hidden = false;
+    const monthStart = App.ymdLocal(new Date(now.getFullYear(), now.getMonth(), 1));
+    Promise.all([
+      sb.from('case_finance').select('*').eq('status', 'open'),
+      sb.from('payments').select('amount,paid_on').gte('paid_on', monthStart),
+    ]).then(([f, p]) => {
+      const rows = f.data || [];
+      const sum = k => rows.reduce((a, r) => a + Number(r[k] || 0), 0);
+      document.getElementById('mFee').textContent = App.fmtWon(sum('fee_amount'));
+      document.getElementById('mPaid').textContent = App.fmtWon(sum('paid_amount'));
+      document.getElementById('mUnpaid').textContent = App.fmtWon(sum('unpaid_amount'));
+      document.getElementById('mMonth').textContent = App.fmtWon((p.data || []).reduce((a, r) => a + Number(r.amount), 0));
+      const unpaid = rows.filter(r => r.unpaid_amount > 0).sort((a, b) => b.unpaid_amount - a.unpaid_amount).slice(0, 5);
+      document.getElementById('unpaidList').innerHTML = unpaid.map(r => `<li><a href="case.html?id=${encodeURIComponent(r.case_id)}">${esc(r.name)}</a>
+        <span class="when bad-text">미수 ${App.fmtWon(r.unpaid_amount)}</span></li>`).join('');
+    });
+  }
+})().catch(e => console.warn(e.message));
+</script>
+</body>
+</html>

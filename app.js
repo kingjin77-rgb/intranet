@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '2.0.0';
+  const APP_VERSION = '3.0.0';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -89,11 +89,16 @@
     header.className = 'topbar';
     header.innerHTML = `
       <div class="topbar-inner">
-        <a class="brand" href="index.html">📁 ${esc(cfg.COMPANY_NAME || '')} 인트라넷</a>
+        <a class="brand" href="home.html">📁 ${esc(cfg.COMPANY_NAME || '')} 인트라넷</a>
         <nav>
+          <a href="home.html">홈</a>
           <a href="index.html">문서함</a>
           <a href="cases.html">사건</a>
+          <a href="tasks.html">업무</a>
           <a href="calendar.html">일정</a>
+          <a href="consults.html">상담</a>
+          <a href="notices.html">공지</a>
+          <a href="library.html">자료실</a>
           <a href="upload.html">＋ 올리기</a>
           ${profile && profile.role === 'admin' ? '<a href="admin.html">직원관리</a>' : ''}
           <a href="help.html" title="PC·휴대폰 설치 안내">❓ 설치</a>
@@ -105,6 +110,7 @@
     const btn = header.querySelector('#logoutBtn');
     if (btn) btn.onclick = async () => {
       try { localStorage.removeItem(WATCH_KEY); } catch {}
+      await unsubscribePush();
       await sb.auth.signOut();
       location.href = 'login.html';
     };
@@ -114,8 +120,31 @@
     if (nb) nb.onclick = async () => {
       const r = await Notification.requestPermission();
       nb.remove();
+      if (r === 'granted') subscribePush(profile).catch(e => console.warn('푸시 등록 실패', e));
       toast(r === 'granted' ? '알림을 켰습니다. 새 문서와 컨펌 차례를 알려드려요.' : '알림이 꺼져 있습니다. 브라우저 설정에서 켤 수 있어요.', r !== 'granted');
     };
+  }
+
+  // ----- 휴대폰 푸시 구독 (앱을 꺼 둬도 알림) -----
+  function b64ToBytes(b64) {
+    const s = atob((b64 + '='.repeat((4 - b64.length % 4) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(s, c => c.charCodeAt(0));
+  }
+  async function subscribePush(me) {
+    if (!cfg.VAPID_PUBLIC_KEY || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    if (Notification.permission !== 'granted' || !(await hasV3())) return;
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription()
+      || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(cfg.VAPID_PUBLIC_KEY) });
+    const j = sub.toJSON();
+    await sb.from('push_subscriptions').upsert({ endpoint: j.endpoint, user_id: me.id, p256dh: j.keys.p256dh, auth: j.keys.auth });
+  }
+  async function unsubscribePush() {
+    try {
+      const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+      const sub = reg && await reg.pushManager.getSubscription();
+      if (sub) { await sb.from('push_subscriptions').delete().eq('endpoint', sub.endpoint); await sub.unsubscribe(); }
+    } catch {}
   }
 
   // ----- 새 문서·내 컨펌 차례 알림 (창이 열려 있는 동안 1분마다 확인) -----
@@ -198,9 +227,30 @@
       // 크롬 확장프로그램이 있으면 툴바 아이콘에도 숫자를 표시
       window.postMessage({ type: 'intranet-badge', count: stepIds.length }, location.origin);
     }
+    // v3: 나에게 온 새 업무 지시 · 새 공지
+    const WATCH3 = 'intranet_watch3';
+    async function checkV3() {
+      if (!(await hasV3())) return;
+      let st = null;
+      try { st = JSON.parse(localStorage.getItem(WATCH3) || 'null'); } catch {}
+      if (st && st.user !== me.id) st = null;
+      const [t, n] = await Promise.all([
+        sb.from('tasks').select('id,title,due_date,created_by').eq('assignee_id', me.id).neq('status', 'done'),
+        sb.from('notices').select('id,title,created_by').order('created_at', { ascending: false }).limit(20),
+      ]);
+      if (t.error || n.error) return;
+      if (st) {
+        t.data.filter(x => !st.tasks.includes(x.id) && x.created_by !== me.id)
+          .forEach(x => notify(`📌 새 업무: ${x.title}`, x.due_date ? `마감 ${x.due_date}` : '', x.id, 'tasks.html'));
+        n.data.filter(x => !st.notices.includes(x.id) && x.created_by !== me.id)
+          .forEach(x => notify(`📢 공지: ${x.title}`, '', x.id, `notices.html#${x.id}`));
+      }
+      try { localStorage.setItem(WATCH3, JSON.stringify({ user: me.id, tasks: t.data.map(x => x.id), notices: n.data.map(x => x.id) })); } catch {}
+    }
     const safeCheck = () => {
       check().catch(e => console.warn('알림 확인 실패', e));
       checkEvents().catch(e => console.warn('일정 확인 실패', e));
+      checkV3().catch(e => console.warn('업무·공지 확인 실패', e));
     };
     safeCheck();
     setInterval(safeCheck, 60 * 1000);
@@ -236,6 +286,8 @@
     }
     renderHeader(profile);
     startWatch(profile);
+    // 알림을 이미 허용한 기기는 조용히 푸시 구독을 맞춰 둔다
+    if ('Notification' in window && Notification.permission === 'granted') subscribePush(profile).catch(() => {});
     try {
       if (localStorage.getItem('intranet_pw_prompt') === 'pending') {
         localStorage.removeItem('intranet_pw_prompt');
@@ -292,6 +344,18 @@
       .then(({ error }) => !error);
     return v2Promise;
   }
+  let v3Promise;
+  function hasV3() {
+    if (!v3Promise) v3Promise = sb.from('tasks').select('id', { count: 'exact', head: true })
+      .then(({ error }) => !error);
+    return v3Promise;
+  }
+  const V3_NOTICE = '<div class="notice">이 메뉴를 쓰려면 DB 업데이트가 필요합니다. 관리자가 Supabase에서 <b>migrations/003_v3.sql</b>을 실행하면 바로 켜집니다.</div>';
+  const TASK_STATUS = { todo: '할 일', doing: '진행중', done: '완료' };
+  const CONSULT_STATUS = { new: '신규', followup: '후속 연락', retained: '수임', dropped: '종료' };
+  function ymdLocal(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+  function ddayDate(ymd) { return ymd ? dday(`${ymd}T00:00:00`) : ''; }
+
   const V2_NOTICE = '<div class="notice">사건·일정·양식 기능을 쓰려면 DB 업데이트가 필요합니다. 관리자가 Supabase에서 <b>migrations/002_v2.sql</b>을 실행하면 바로 켜집니다.</div>';
 
   async function loadCases(includeClosed) {
@@ -396,5 +460,5 @@
     (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
   }
 
-  window.App = { sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
+  window.App = { sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, hasV3, V3_NOTICE, TASK_STATUS, CONSULT_STATUS, ymdLocal, ddayDate, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
 })();

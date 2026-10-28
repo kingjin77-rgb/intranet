@@ -90,6 +90,27 @@ supabase/   schema.sql (DB 테이블·보안 정책·컨펌 로직)
 
 직원에게는 **https://kingjin77-rgb.github.io/intranet/help.html** 링크만 보내면 됩니다. 크롬 · 네이버 웨일(사이드바 포함) · 엣지 · 아이폰 · 안드로이드 방법이 탭으로 정리되어 있고, 접속한 기기에 맞는 탭이 자동으로 열립니다.
 
+## v3 업데이트 (홈·업무·상담·수임료·공지·자료실·휴대폰 푸시)
+
+| 메뉴 | 내용 |
+|---|---|
+| 홈 | 내 컨펌 대기, 내 할 일, 7일 안의 일정, 안 읽은 공지, 연락할 상담, 최근 문서, 수임료 현황(관리자) |
+| 업무 | 담당자·마감일·사건을 정해 업무 지시 → 담당자에게 알림, 진행·완료 체크, 마감 지남 표시 |
+| 상담 | 상담 기록·다음 연락일, [수임 → 사건 만들기] 한 번에 사건 생성 |
+| 사건 | 계약 금액·입금 기록·미수금·지출, 대법원 나의사건검색 바로가기와 법원·사건번호·당사자 복사, 이 사건의 할 일 |
+| 공지 | 관리자가 올리면 전 직원 알림, 읽은 사람·안 읽은 사람 확인, 고정 공지 |
+| 자료실 | 위임장·내용증명·계약서 등 양식 파일 모아 두고 받기 |
+
+**적용**: Supabase SQL Editor에서 `supabase/migrations/003_v3.sql` 을 붙여넣고 Run (002 다음). 실행 전에는 새 메뉴에 안내 문구만 나옵니다.
+
+**휴대폰 푸시 (선택, 10분)** — 앱을 꺼 둬도 컨펌 차례·업무 지시·공지가 휴대폰에 옵니다.
+1. Supabase → **Edge Functions → Deploy a new function → Via Editor** → 이름 `send-push` → `supabase/functions/send-push/index.ts` 내용 붙여넣기 → Deploy
+2. 함수 설정에서 **Enforce JWT verification 끄기**
+3. **Edge Functions → Secrets** 에 `PUSH_SECRET`(아무 긴 문자열), `VAPID_PUBLIC_KEY`(config.js 의 값), `VAPID_PRIVATE_KEY`(관리자에게 따로 전달된 값), `VAPID_SUBJECT`(`mailto:관리자이메일`) 등록
+4. SQL Editor에서 한 줄 실행:
+   `insert into public.push_config (url, secret) values ('https://<프로젝트ID>.supabase.co/functions/v1/send-push', '<PUSH_SECRET 과 같은 값>') on conflict (id) do update set url = excluded.url, secret = excluded.secret;`
+5. 각 직원은 인트라넷에서 **🔔 알림 켜기** (아이폰은 홈 화면 앱에서)
+
 ## v2 업데이트 (사건·일정·수정본·양식) 적용 방법
 
 1. Supabase **SQL Editor**에 `supabase/migrations/002_v2.sql` 을 통째로 붙여넣고 **Run** (여러 번 실행해도 안전)

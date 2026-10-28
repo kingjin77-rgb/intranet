@@ -1,6 +1,6 @@
 // 툴바 아이콘을 누르면 인트라넷을 주소창 없는 작은 창으로 연다.
 // 이미 열려 있으면 그 창을 앞으로 가져오고, 창 크기·위치는 기억한다.
-const START_URL = 'https://kingjin77-rgb.github.io/intranet/index.html';
+const START_URL = 'https://kingjin77-rgb.github.io/intranet/home.html';
 const DEFAULT_SIZE = { width: 420, height: 760 };
 
 async function openIntranet({ focused = true } = {}) {
