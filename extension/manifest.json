@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "제이엘 인트라넷",
-  "version": "1.1.0",
-  "description": "인트라넷을 메신저처럼 작은 창으로 열고, 새 문서·컨펌 차례를 아이콘 숫자로 알려줍니다.",
+  "version": "1.2.0",
+  "description": "인트라넷을 메신저처럼 작은 창으로 열고, 채팅·새 문서·컨펌 차례를 아이콘 숫자로 알려줍니다.",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
