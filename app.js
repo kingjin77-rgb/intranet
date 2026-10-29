@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '3.5.0';
+  const APP_VERSION = '4.0.0';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -55,8 +55,10 @@
     if (m.includes('same as the old')) return '기존 비밀번호와 다르게 정해 주세요.';
     if (m.includes('Database error saving new user') || m.includes('초대되지 않은')) return '초대되지 않은 이메일입니다. 관리자에게 등록을 요청하세요.';
     if (m.includes('Token has expired') || m.includes('invalid')) return '인증 코드가 올바르지 않거나 만료되었습니다.';
-    if (/schema cache|does not exist/.test(m) && /comment_reactions|attachments|add_approvers|extra_files|create_document_v3/.test(m))
-      return /extra_files|create_document_v3/.test(m)
+    if (/schema cache|does not exist/.test(m) && /comment_reactions|attachments|add_approvers|extra_files|create_document_v3|chat_|presence|admin_user_status/.test(m))
+      return /chat_|presence|admin_user_status/.test(m)
+        ? 'DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/007_chat.sql 을 실행하면 바로 됩니다.'
+        : /extra_files|create_document_v3/.test(m)
         ? 'DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/006_files.sql 을 실행하면 바로 됩니다.'
         : 'DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/005_v33.sql 을 실행하면 바로 됩니다.';
     if (m.includes('rate limit')) return '요청이 너무 많습니다. 잠시 후 다시 시도하세요.';
@@ -120,6 +122,7 @@
         <a class="brand" href="home.html">📁 ${esc(cfg.COMPANY_NAME || '')} 인트라넷</a>
         <nav>
           <a href="home.html">홈</a>
+          <a href="chat.html" class="nav-chat">💬 채팅<span class="nav-badge" id="chatBadge" hidden></span></a>
           <a href="index.html">문서함</a>
           <a href="cases.html">사건</a>
           <a href="tasks.html">업무</a>
@@ -228,6 +231,17 @@
     } catch {}
   }
 
+  // 앱 아이콘·확장 아이콘 숫자 = 내 컨펌 대기 + 안 읽은 채팅
+  const badgeState = { confirm: 0, chat: 0 };
+  function pushBadge() {
+    const n = badgeState.confirm + badgeState.chat;
+    setBadge(n);
+    // 크롬 확장프로그램이 있으면 툴바 아이콘에도 숫자를 표시
+    window.postMessage({ type: 'intranet-badge', count: n }, location.origin);
+    const el = document.getElementById('chatBadge');
+    if (el) { el.textContent = badgeState.chat > 99 ? '99+' : String(badgeState.chat); el.hidden = !badgeState.chat; }
+  }
+
   function startWatch(me) {
     let state = null;
     try { state = JSON.parse(localStorage.getItem(WATCH_KEY) || 'null'); } catch {}
@@ -251,9 +265,8 @@
       const prevAt = state ? state.lastDocAt : '';
       state = { user: me.id, steps: stepIds, lastDocAt: lastDocAt > prevAt ? lastDocAt : prevAt };
       try { localStorage.setItem(WATCH_KEY, JSON.stringify(state)); } catch {}
-      setBadge(stepIds.length);
-      // 크롬 확장프로그램이 있으면 툴바 아이콘에도 숫자를 표시
-      window.postMessage({ type: 'intranet-badge', count: stepIds.length }, location.origin);
+      badgeState.confirm = stepIds.length;
+      pushBadge();
     }
     // v3: 나에게 온 새 업무 지시 · 새 공지
     const WATCH3 = 'intranet_watch3';
@@ -309,8 +322,36 @@
         .reduce((a, b) => (new Date(b) > new Date(a) ? b : a));
       try { localStorage.setItem(WATCH_ACT, JSON.stringify({ user: me.id, since: next, status })); } catch {}
     }
+    // v4: 접속 상태 기록 + 안 읽은 채팅 수 + 새 메시지 PC 알림
+    const WATCH_CHAT = 'intranet_watch_chat';
+    async function checkChat() {
+      if (!(await hasV4())) return;
+      const ext = document.documentElement.dataset.intranetExt === '1';
+      sb.rpc('touch_presence', { p_client: isStandalone ? 'app' : ext ? 'ext' : 'web', p_ua: navigator.userAgent.slice(0, 300) }).then(() => {}, () => {});
+      const { data: un } = await sb.rpc('chat_unread');
+      badgeState.chat = (un || []).reduce((a, r) => a + (r.unread || 0), 0);
+      pushBadge();
+      let st = null;
+      try { st = JSON.parse(localStorage.getItem(WATCH_CHAT) || 'null'); } catch {}
+      if (st && st.user !== me.id) st = null;
+      const since = st ? st.since : new Date().toISOString();
+      const { data, error } = await sb.from('chat_messages').select('id,room_id,user_id,body,attachments,created_at,profiles(name),chat_rooms(kind,name)')
+        .gt('created_at', since).neq('user_id', me.id).is('deleted_at', null).order('created_at').limit(20);
+      if (error) return;
+      const watching = (id) => /chat\.html$/.test(location.pathname) && window.__chatRoom === id && !document.hidden;
+      if (st) (data || []).filter(m => !watching(m.room_id)).forEach(m => {
+        const room = m.chat_rooms || {};
+        const who = (m.profiles && m.profiles.name) || '';
+        notify(`💬 ${who}${room.kind && room.kind !== 'dm' ? ` (${room.name || ''})` : ''}`,
+          (m.body || '').slice(0, 80) || '📎 첨부', m.room_id, `chat.html#${m.room_id}`);
+      });
+      const next = [since, ...(data || []).map(m => m.created_at)].reduce((a, b) => (new Date(b) > new Date(a) ? b : a));
+      try { localStorage.setItem(WATCH_CHAT, JSON.stringify({ user: me.id, since: next })); } catch {}
+    }
+    refreshChat = () => checkChat().catch(() => {});
     const safeCheck = () => {
       check().catch(e => console.warn('알림 확인 실패', e));
+      checkChat().catch(e => console.warn('채팅 확인 실패', e));
       checkActivity().catch(e => console.warn('코멘트·열람 확인 실패', e));
       checkEvents().catch(e => console.warn('일정 확인 실패', e));
       checkV3().catch(e => console.warn('업무·공지 확인 실패', e));
@@ -408,7 +449,14 @@
       .then(({ error, data }) => !error && Array.isArray(data), () => false);
     return v2Promise;
   }
-  let v3Promise;
+  let v3Promise, v4Promise;
+  let refreshChat = () => {};
+  function hasV4() {
+    if (!v4Promise) v4Promise = sb.from('chat_rooms').select('id').limit(1)
+      .then(({ error, data }) => !error && Array.isArray(data), () => false);
+    return v4Promise;
+  }
+  const V4_NOTICE = '<div class="notice">채팅을 쓰려면 DB 업데이트가 필요합니다. 관리자가 Supabase에서 <b>migrations/007_chat.sql</b>을 실행하면 바로 켜집니다.</div>';
   function hasV3() {
     if (!v3Promise) v3Promise = sb.from('tasks').select('id').limit(1)
       .then(({ error, data }) => !error && Array.isArray(data), () => false);
@@ -522,5 +570,5 @@
     (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
   }
 
-  window.App = { snapshotFile, uploadFile, sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, hasV3, V3_NOTICE, TASK_STATUS, CONSULT_STATUS, ymdLocal, ddayDate, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
+  window.App = { hasV4, V4_NOTICE, refreshChatBadge: () => refreshChat(), snapshotFile, uploadFile, sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, hasV3, V3_NOTICE, TASK_STATUS, CONSULT_STATUS, ymdLocal, ddayDate, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
 })();

@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>채팅 · 사내 인트라넷</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1a4f8a">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="인트라넷">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="style.css?v=4.0.0">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
+<script src="config.js?v=4.0.0"></script>
+<script src="app.js?v=4.0.0"></script>
+</head>
+<body class="chat-page">
+<main class="chat-wrap" id="wrap">
+  <aside class="chat-list">
+    <div class="chat-list-head">
+      <b>💬 채팅</b>
+      <button class="btn sm" id="newChatBtn">＋ 새 대화</button>
+    </div>
+    <input type="text" id="roomSearch" class="chat-search" placeholder="이름·방 이름 검색">
+    <div id="rooms" class="rooms"><p class="muted" style="padding:12px">불러오는 중…</p></div>
+  </aside>
+
+  <section class="chat-room" id="roomPane">
+    <div class="chat-empty" id="emptyPane">
+      <div style="font-size:40px">💬</div>
+      <p>왼쪽에서 대화를 고르거나 <b>＋ 새 대화</b>를 눌러 시작하세요.</p>
+    </div>
+    <div class="chat-room-head" id="roomHead" hidden>
+      <button class="chat-back" id="backBtn" aria-label="목록으로">←</button>
+      <div class="chat-room-title">
+        <b id="roomTitle"></b>
+        <span class="muted" id="roomSub"></span>
+      </div>
+      <button class="chat-back" id="roomMenuBtn" aria-label="방 정보" hidden>⋯</button>
+    </div>
+    <div class="chat-msgs" id="msgs" hidden></div>
+    <form class="chat-input" id="sendForm" hidden>
+      <div class="xc-files" id="pendingFiles"></div>
+      <div class="chat-input-row">
+        <label class="xc-tool" id="attachBtn" title="파일·사진 (5개까지, Ctrl+V·끌어다 놓기)">📎<input type="file" id="fileInput" multiple hidden></label>
+        <button type="button" class="xc-tool" id="emojiBtn" title="이모지">😊</button>
+        <textarea id="msgBody" rows="1" maxlength="4000" placeholder="메시지 입력" title="Enter 보내기 · Shift+Enter 줄바꿈"></textarea>
+        <button class="xc-post" type="submit" id="sendBtn">보내기</button>
+      </div>
+      <div class="xc-emoji chat-emoji" id="emojiPanel" hidden></div>
+    </form>
+  </section>
+</main>
+
+<div class="modal-bg" id="modal" hidden>
+  <div class="modal card">
+    <h2 id="modalTitle">새 대화</h2>
+    <input type="text" id="pickSearch" placeholder="이름 검색">
+    <div class="pick-list" id="pickList"></div>
+    <div id="groupNameRow" hidden>
+      <label for="groupName">방 이름 (여러 명이면 그룹 대화)</label>
+      <input type="text" id="groupName" maxlength="60">
+    </div>
+    <div id="modalExtra"></div>
+    <div class="btn-row">
+      <button class="btn" id="modalOk" style="flex:1">대화 시작</button>
+      <button class="btn ghost" id="modalCancel">닫기</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(async () => {
+  const { sb, esc, toast, errMsg, fmtDate, fmtSize, fileIcon } = App;
+  const me = await App.requireAuth();
+  const wrap = document.getElementById('wrap');
+  const fit = () => {
+    const h = document.querySelector('.topbar');
+    wrap.style.height = `calc(100dvh - ${h ? h.offsetHeight : 0}px)`;
+  };
+  fit(); window.addEventListener('resize', fit);
+
+  if (!(await App.hasV4())) {
+    wrap.innerHTML = `<div class="container">${App.V4_NOTICE}</div>`;
+    return;
+  }
+
+  const ONLINE_MS = 2 * 60 * 1000;
+  const EMOJIS = '😀 😂 🤣 😊 😍 🥰 😎 🤔 😅 😭 😡 😱 🥲 🙄 😴 🤝 👍 👎 👏 🙏 💪 👌 ✌️ 🙌 🔥 💯 ✅ ❌ ⚠️ ❗ ❓ 💡 📌 📎 📅 ⏰ 💰 📄 ⚖️ 🎉 ❤️ 💙 👀 ✍️ 🚀 ☕'.split(' ');
+  const COLORS = ['#1a4f8a', '#e8821a', '#15803d', '#7c3aed', '#be185d', '#0e7490', '#b45309', '#4d7c0f'];
+
+  let people = {}, rooms = [], membersOf = {}, unread = {}, lastMsg = {}, presence = {};
+  let current = null, msgs = [], hasMore = false, pending = [];
+
+  const nameOf = (id) => (people[id] && people[id].name) || '(퇴사자)';
+  function avatar(uid, small) {
+    let h = 0;
+    for (const ch of uid || '') h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return `<span class="xc-avatar${small ? ' sm' : ''}" style="background:${COLORS[h % COLORS.length]}">${esc(nameOf(uid).slice(0, 1))}</span>`;
+  }
+  const online = (uid) => presence[uid] && Date.now() - new Date(presence[uid]) < ONLINE_MS;
+  const activeIds = () => Object.values(people).filter(p => p.active).map(p => p.id);
+  function audience(room) {
+    return room.kind === 'all' ? activeIds() : (membersOf[room.id] || []).map(m => m.user_id);
+  }
+  function roomName(room) {
+    if (room.kind === 'all') return '📢 전체';
+    if (room.kind === 'dm') {
+      const other = audience(room).find(u => u !== me.id);
+      return other ? nameOf(other) : '(나간 대화)';
+    }
+    return room.name || '그룹';
+  }
+  const fmtTime = (iso) => new Date(iso).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' });
+  function fmtWhen(iso) {
+    const d = new Date(iso), now = new Date();
+    if (d.toDateString() === now.toDateString()) return fmtTime(iso);
+    const y = new Date(now); y.setDate(now.getDate() - 1);
+    if (d.toDateString() === y.toDateString()) return '어제';
+    return `${d.getMonth() + 1}/${d.getDate()}`;
+  }
+  const preview = (m) => !m ? '' : m.deleted_at ? '삭제된 메시지' : (m.body || '').trim().split('\n')[0].slice(0, 40) || '📎 첨부';
+  function fmtBody(t) {
+    return esc(t)
+      .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
+      .replace(/(^|\s)@([^\s@<]{1,20})/g, '$1<span class="xc-mention">@$2</span>');
+  }
+  const isImage = (f) => /^image\/(png|jpe?g|gif|webp)$/i.test(f.type || '') || /\.(png|jpe?g|gif|webp)$/i.test(f.name || '');
+
+  // ----- 데이터 -----
+  async function loadPeople() {
+    const { data } = await sb.from('profiles').select('id,name,dept,active').order('name');
+    people = Object.fromEntries((data || []).map(p => [p.id, p]));
+  }
+  async function loadPresence() {
+    const { data } = await sb.from('presence').select('user_id,last_seen_at');
+    presence = Object.fromEntries((data || []).map(p => [p.user_id, p.last_seen_at]));
+  }
+  async function loadRooms() {
+    const [r, m, u, recent] = await Promise.all([
+      sb.from('chat_rooms').select('*').order('last_message_at', { ascending: false }),
+      sb.from('chat_members').select('room_id,user_id,last_read_at'),
+      sb.rpc('chat_unread'),
+      sb.from('chat_messages').select('id,room_id,user_id,body,created_at,deleted_at').order('created_at', { ascending: false }).limit(300),
+    ]);
+    if (r.error) return toast(errMsg(r.error), true);
+    rooms = r.data || [];
+    membersOf = {};
+    (m.data || []).forEach(x => (membersOf[x.room_id] = membersOf[x.room_id] || []).push(x));
+    unread = Object.fromEntries((u.data || []).map(x => [x.room_id, x.unread]));
+    lastMsg = {};
+    (recent.data || []).forEach(x => { if (!lastMsg[x.room_id]) lastMsg[x.room_id] = x; });
+    // 전체방은 맨 위, 나머지는 최근 대화 순 (1:1은 메시지가 있을 때만)
+    rooms = rooms.filter(x => x.kind !== 'dm' || lastMsg[x.id] || new Date(x.last_message_at) - new Date(x.created_at) > 1000 || x.id === (current && current.id));
+    rooms.sort((a, b) => (b.kind === 'all') - (a.kind === 'all') || new Date(b.last_message_at) - new Date(a.last_message_at));
+    renderRooms();
+    if (current) {
+      const fresh = rooms.find(x => x.id === current.id) || (await sb.from('chat_rooms').select('*').eq('id', current.id).maybeSingle()).data;
+      if (fresh) { current = fresh; renderHead(); }
+    }
+  }
+
+  function renderRooms() {
+    const q = document.getElementById('roomSearch').value.trim().toLowerCase();
+    const list = rooms.filter(r => !q || roomName(r).toLowerCase().includes(q)
+      || audience(r).some(u => nameOf(u).toLowerCase().includes(q)));
+    document.getElementById('rooms').innerHTML = list.length ? list.map(r => {
+      const other = r.kind === 'dm' ? audience(r).find(u => u !== me.id) : null;
+      const n = unread[r.id] || 0;
+      const lm = lastMsg[r.id];
+      return `<button class="room${current && current.id === r.id ? ' active' : ''}" data-id="${r.id}">
+        <span class="room-av">${r.kind === 'dm' && other ? avatar(other) : `<span class="xc-avatar" style="background:${r.kind === 'all' ? '#1a4f8a' : '#7c3aed'}">${r.kind === 'all' ? '📢' : '👥'}</span>`}
+          ${other && online(other) ? '<span class="dot-on" title="접속 중"></span>' : ''}</span>
+        <span class="room-main">
+          <span class="room-top"><b>${esc(roomName(r))}</b>${r.kind === 'group' ? `<span class="muted"> ${audience(r).length}</span>` : ''}
+            <span class="room-when">${lm ? fmtWhen(lm.created_at) : ''}</span></span>
+          <span class="room-last">${lm ? (lm.user_id === me.id ? '나: ' : r.kind !== 'dm' ? esc(nameOf(lm.user_id)) + ': ' : '') + esc(preview(lm)) : '<span class="muted">아직 대화가 없습니다</span>'}</span>
+        </span>
+        ${n ? `<span class="room-badge">${n > 99 ? '99+' : n}</span>` : ''}
+      </button>`;
+    }).join('') : '<p class="muted" style="padding:12px">대화가 없습니다. ＋ 새 대화를 눌러 시작하세요.</p>';
+  }
+  document.getElementById('rooms').onclick = (e) => {
+    const b = e.target.closest('.room');
+    if (b) openRoom(b.dataset.id);
+  };
+  document.getElementById('roomSearch').oninput = renderRooms;
+
+  // ----- 방 열기 · 메시지 -----
+  function renderHead() {
+    document.getElementById('roomTitle').textContent = roomName(current);
+    const aud = audience(current);
+    let sub = '';
+    if (current.kind === 'dm') {
+      const other = aud.find(u => u !== me.id);
+      const seen = other && presence[other];
+      sub = other && online(other) ? '🟢 접속 중' : seen ? `${fmtWhen(seen)} 마지막 접속` : '';
+    } else {
+      const on = aud.filter(online).length;
+      sub = `${aud.length}명${on ? ` · 🟢 ${on}명 접속 중` : ''}`;
+    }
+    document.getElementById('roomSub').textContent = sub;
+    document.getElementById('roomMenuBtn').hidden = current.kind !== 'group';
+  }
+
+  async function openRoom(id, { fromHash } = {}) {
+    let room = rooms.find(r => r.id === id);
+    if (!room) {
+      const { data } = await sb.from('chat_rooms').select('*').eq('id', id).maybeSingle();
+      if (!data) { toast('대화방을 찾을 수 없습니다.', true); return; }
+      room = data;
+    }
+    current = room;
+    window.__chatRoom = id;
+    if (!fromHash && location.hash !== '#' + id) history.replaceState(null, '', '#' + id);
+    wrap.classList.add('room-open');
+    ['roomHead', 'msgs', 'sendForm'].forEach(k => (document.getElementById(k).hidden = false));
+    document.getElementById('emptyPane').hidden = true;
+    renderHead();
+    renderRooms();
+    await loadMessages();
+    document.getElementById('msgBody').focus({ preventScroll: true });
+  }
+
+  async function loadMessages(older) {
+    const PAGE = 50;
+    let q = sb.from('chat_messages').select('*').eq('room_id', current.id).order('created_at', { ascending: false }).limit(PAGE);
+    if (older && msgs.length) q = q.lt('created_at', msgs[0].created_at);
+    const roomAtStart = current.id;
+    const { data, error } = await q;
+    if (error) return toast(errMsg(error), true);
+    if (!current || current.id !== roomAtStart) return;
+    const got = (data || []).reverse();
+    hasMore = got.length === PAGE;
+    const box = document.getElementById('msgs');
+    const prevH = box.scrollHeight, prevTop = box.scrollTop;
+    msgs = older ? got.concat(msgs) : got;
+    renderMessages();
+    box.scrollTop = older ? box.scrollHeight - prevH + prevTop : box.scrollHeight;
+    if (!older) markRead();
+  }
+
+  function unreadCount(m) {
+    // 카톡처럼: 이 메시지를 아직 안 읽은 사람 수
+    const reads = Object.fromEntries((membersOf[current.id] || []).map(x => [x.user_id, x.last_read_at]));
+    return audience(current).filter(u => u !== m.user_id && !(reads[u] && new Date(reads[u]) >= new Date(m.created_at))).length;
+  }
+
+  function renderMessages() {
+    const box = document.getElementById('msgs');
+    let html = hasMore ? '<button class="btn ghost sm chat-more" id="moreBtn">이전 대화 더 보기</button>' : '';
+    let prev = null;
+    msgs.forEach((m, i) => {
+      const d = new Date(m.created_at);
+      if (!prev || new Date(prev.created_at).toDateString() !== d.toDateString()) {
+        html += `<div class="chat-day"><span>${d.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })}</span></div>`;
+        prev = null;
+      }
+      const next = msgs[i + 1];
+      const sameAsPrev = prev && prev.user_id === m.user_id && d - new Date(prev.created_at) < 3 * 60 * 1000;
+      const lastOfRun = !next || next.user_id !== m.user_id || new Date(next.created_at) - d >= 3 * 60 * 1000
+        || new Date(next.created_at).toDateString() !== d.toDateString();
+      const mine = m.user_id === me.id;
+      const n = unreadCount(m);
+      const files = Array.isArray(m.attachments) ? m.attachments : [];
+      const content = m.deleted_at ? '<span class="chat-deleted">삭제된 메시지입니다</span>'
+        : `${m.body ? `<div class="chat-text">${fmtBody(m.body)}</div>` : ''}
+           ${files.filter(isImage).map(f => `<button type="button" class="chat-img" data-act="img" data-path="${esc(f.path)}" data-name="${esc(f.name)}"><img alt="${esc(f.name)}" data-src="${esc(f.path)}"></button>`).join('')}
+           ${files.filter(f => !isImage(f)).map(f => `<button type="button" class="xc-file" data-act="file" data-path="${esc(f.path)}" data-name="${esc(f.name)}"><span>${fileIcon(f.type, f.name)}</span><span class="nm">${esc(f.name)}</span><span class="sz">${fmtSize(f.size)}</span><span>⬇</span></button>`).join('')}`;
+      html += `<div class="msg${mine ? ' mine' : ''}${sameAsPrev ? ' cont' : ''}" data-id="${m.id}">
+        ${mine ? '' : `<span class="msg-av">${sameAsPrev ? '' : avatar(m.user_id, true)}</span>`}
+        <div class="msg-col">
+          ${!mine && !sameAsPrev && current.kind !== 'dm' ? `<div class="msg-name">${esc(nameOf(m.user_id))}</div>` : ''}
+          <div class="msg-line">
+            <div class="bubble${m.deleted_at ? ' del' : ''}" ${mine && !m.deleted_at ? 'data-act="menu"' : ''}>${content}</div>
+            <div class="msg-meta" ${mine && !m.deleted_at ? 'data-act="menu" title="눌러서 삭제"' : ''}>${n && !m.deleted_at ? `<span class="msg-unread">${n}</span>` : ''}${lastOfRun ? `<span>${fmtTime(m.created_at)}</span>` : ''}</div>
+          </div>
+          ${mine && !m.deleted_at ? '<button type="button" class="msg-del" data-act="del" hidden>삭제</button>' : ''}
+        </div>
+      </div>`;
+      prev = m;
+    });
+    box.innerHTML = html || '<p class="muted chat-first">첫 메시지를 보내 보세요 👋</p>';
+    box.querySelectorAll('img[data-src]').forEach(img => signed(img.dataset.src).then(u => (img.src = u)).catch(() => {}));
+  }
+
+  const urlCache = {};
+  async function signed(path, download) {
+    const key = path + (download ? '|d' : '');
+    if (urlCache[key]) return urlCache[key];
+    const { data, error } = await sb.storage.from('docs').createSignedUrl(path, 3600, download ? { download } : undefined);
+    if (error || !data) throw error || new Error('파일을 열 수 없습니다');
+    return (urlCache[key] = data.signedUrl);
+  }
+  function lightbox(src, name) {
+    const el = document.createElement('div');
+    el.className = 'xc-lightbox';
+    el.innerHTML = '<img alt=""><div class="cap"></div>';
+    el.querySelector('img').src = src;
+    el.querySelector('.cap').textContent = `${name} · 누르면 닫힘`;
+    el.onclick = () => el.remove();
+    document.body.appendChild(el);
+  }
+
+  document.getElementById('msgs').onclick = async (e) => {
+    const b = e.target.closest('[data-act], #moreBtn');
+    if (!b) return;
+    if (b.id === 'moreBtn') return loadMessages(true);
+    const msgEl = b.closest('.msg');
+    try {
+      if (b.dataset.act === 'img') lightbox(await signed(b.dataset.path), b.dataset.name);
+      else if (b.dataset.act === 'file') location.href = await signed(b.dataset.path, b.dataset.name);
+      else if (b.dataset.act === 'menu') {
+        const del = msgEl.querySelector('.msg-del');
+        if (del) del.hidden = !del.hidden;
+      } else if (b.dataset.act === 'del') {
+        if (!confirm('이 메시지를 삭제할까요?')) return;
+        const m = msgs.find(x => x.id === msgEl.dataset.id);
+        const { error } = await sb.from('chat_messages').update({ deleted_at: new Date().toISOString() }).eq('id', m.id);
+        if (error) return toast(errMsg(error), true);
+        const paths = (m.attachments || []).map(f => f.path);
+        if (paths.length) sb.storage.from('docs').remove(paths).catch(() => {});
+        m.deleted_at = new Date().toISOString(); m.body = ''; m.attachments = [];
+        renderMessages();
+      }
+    } catch (err) { toast(errMsg(err), true); }
+  };
+  document.getElementById('msgs').addEventListener('scroll', (e) => {
+    if (hasMore && e.target.scrollTop < 30) { hasMore = false; loadMessages(true); }
+  });
+
+  let readT;
+  function markRead() {
+    clearTimeout(readT);
+    readT = setTimeout(async () => {
+      if (!current || document.hidden) return;
+      await sb.rpc('chat_mark_read', { p_room: current.id });
+      unread[current.id] = 0;
+      // 내 읽음 시각을 바로 반영해서 상대 메시지 옆 '1'을 지운다
+      const list = membersOf[current.id] = membersOf[current.id] || [];
+      const mine = list.find(x => x.user_id === me.id);
+      if (mine) mine.last_read_at = new Date().toISOString();
+      else list.push({ room_id: current.id, user_id: me.id, last_read_at: new Date().toISOString() });
+      renderMessages();
+      renderRooms();
+      App.refreshChatBadge && App.refreshChatBadge();
+    }, 300);
+  }
+
+  document.getElementById('backBtn').onclick = () => {
+    wrap.classList.remove('room-open');
+    current = null; window.__chatRoom = null;
+    history.replaceState(null, '', location.pathname);
+    renderRooms();
+  };
+
+  // ----- 보내기 -----
+  const form = document.getElementById('sendForm');
+  const ta = document.getElementById('msgBody');
+  const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 160) + 'px'; };
+  ta.addEventListener('input', grow);
+  ta.addEventListener('keydown', (e) => {
+    // 한글 조합 중 Enter 는 글자 확정이므로 보내지 않는다
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); form.requestSubmit(); }
+  });
+  function renderPending() {
+    document.getElementById('pendingFiles').innerHTML = pending.map((f, i) => `<span class="xc-chip">
+      ${isImage(f) ? `<img src="${URL.createObjectURL(f)}" alt="">` : `<span>${fileIcon(f.type, f.name)}</span>`}
+      <span class="nm">${esc(f.name)}</span><button type="button" data-i="${i}" aria-label="빼기">✕</button></span>`).join('');
+  }
+  document.getElementById('pendingFiles').onclick = (e) => {
+    const b = e.target.closest('button[data-i]');
+    if (b) { pending.splice(+b.dataset.i, 1); renderPending(); }
+  };
+  async function addFiles(files) {
+    for (const f of files) {
+      if (pending.length >= 5) { toast('첨부는 5개까지 가능합니다.', true); break; }
+      if (f.size > 50 * 1024 * 1024) { toast(`${f.name}: 50MB 이하만 보낼 수 있습니다.`, true); continue; }
+      let copy;
+      try { copy = await App.snapshotFile(f); } catch (err) { toast(err.message, true); continue; }
+      pending.push(f.name === 'image.png' ? new File([copy], `캡처_${new Date().toTimeString().slice(0, 8).replace(/:/g, '')}.png`, { type: f.type }) : copy);
+    }
+    renderPending();
+  }
+  document.getElementById('fileInput').onchange = (e) => { addFiles([...e.target.files]); e.target.value = ''; };
+  ta.addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData && e.clipboardData.files || [])];
+    if (files.length) { e.preventDefault(); addFiles(files); }
+  });
+  const pane = document.getElementById('roomPane');
+  pane.addEventListener('dragover', (e) => { if (current) { e.preventDefault(); pane.classList.add('drag'); } });
+  pane.addEventListener('dragleave', () => pane.classList.remove('drag'));
+  pane.addEventListener('drop', (e) => { if (!current) return; e.preventDefault(); pane.classList.remove('drag'); addFiles([...e.dataTransfer.files]); });
+
+  const emoji = document.getElementById('emojiPanel');
+  emoji.innerHTML = EMOJIS.map(x => `<button type="button">${x}</button>`).join('');
+  document.getElementById('emojiBtn').onclick = () => (emoji.hidden = !emoji.hidden);
+  emoji.onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const at = ta.selectionStart ?? ta.value.length;
+    ta.value = ta.value.slice(0, at) + b.textContent + ta.value.slice(ta.selectionEnd ?? at);
+    ta.selectionStart = ta.selectionEnd = at + b.textContent.length;
+    ta.focus(); grow();
+  };
+  document.addEventListener('click', (e) => { if (!e.target.closest('#emojiPanel, #emojiBtn')) emoji.hidden = true; });
+
+  let sending = false;
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    if (sending || !current) return;
+    const body = ta.value.trim();
+    if (!body && !pending.length) return;
+    sending = true;
+    const btn = document.getElementById('sendBtn');
+    btn.disabled = true;
+    const uploaded = [];
+    try {
+      for (const f of pending) {
+        btn.textContent = `${uploaded.length + 1}/${pending.length}`;
+        const ext = ((f.name.match(/\.([A-Za-z0-9]{1,8})$/) || [, 'bin'])[1]).toLowerCase();
+        const rand = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2);
+        const path = `${me.id}/m/${rand}.${ext}`;
+        const up = await App.uploadFile(path, f);
+        if (up.error) throw up.error;
+        uploaded.push({ path, name: f.name, type: f.type || ext, size: f.size });
+      }
+      const row = { room_id: current.id, user_id: me.id, body };
+      if (uploaded.length) row.attachments = uploaded;
+      const { error } = await sb.from('chat_messages').insert(row);
+      if (error) throw error;
+      ta.value = ''; grow();
+      pending = []; renderPending();
+      await loadMessages();
+      loadRooms();
+    } catch (err) {
+      if (uploaded.length) sb.storage.from('docs').remove(uploaded.map(u => u.path)).catch(() => {});
+      toast(errMsg(err), true);
+    } finally {
+      sending = false; btn.disabled = false; btn.textContent = '보내기';
+    }
+  };
+
+  // ----- 새 대화 · 방 정보 -----
+  const modal = document.getElementById('modal');
+  let modalMode = 'new';
+  function renderPick() {
+    const q = document.getElementById('pickSearch').value.trim().toLowerCase();
+    const exclude = new Set(modalMode === 'invite' ? audience(current) : [me.id]);
+    const checked = new Set([...document.querySelectorAll('#pickList input:checked')].map(i => i.value));
+    const list = Object.values(people).filter(p => p.active && !exclude.has(p.id) && (!q || p.name.toLowerCase().includes(q) || (p.dept || '').toLowerCase().includes(q)));
+    document.getElementById('pickList').innerHTML = list.length ? list.map(p => `<label>
+      <input type="checkbox" value="${p.id}"${checked.has(p.id) ? ' checked' : ''}> ${avatar(p.id, true)} ${esc(p.name)} <span class="muted">${esc(p.dept || '')}</span>
+      ${online(p.id) ? '<span class="dot-on inline" title="접속 중"></span>' : ''}</label>`).join('') : '<p class="muted">고를 직원이 없습니다.</p>';
+    onPickChange();
+  }
+  function onPickChange() {
+    const ids = [...document.querySelectorAll('#pickList input:checked')].map(i => i.value);
+    if (modalMode === 'new') {
+      document.getElementById('groupNameRow').hidden = ids.length < 2;
+      const gn = document.getElementById('groupName');
+      if (ids.length >= 2 && !gn.dataset.touched) gn.value = [me.id, ...ids].map(nameOf).join(', ').slice(0, 60);
+      document.getElementById('modalOk').textContent = ids.length >= 2 ? `그룹 대화 시작 (${ids.length + 1}명)` : '대화 시작';
+    }
+  }
+  document.getElementById('pickList').onchange = onPickChange;
+  document.getElementById('pickSearch').oninput = renderPick;
+  document.getElementById('groupName').oninput = (e) => (e.target.dataset.touched = '1');
+  function openModal(mode) {
+    modalMode = mode;
+    document.getElementById('pickSearch').value = '';
+    document.getElementById('pickList').innerHTML = '';
+    document.getElementById('groupName').value = '';
+    delete document.getElementById('groupName').dataset.touched;
+    document.getElementById('groupNameRow').hidden = true;
+    const extra = document.getElementById('modalExtra');
+    if (mode === 'new') {
+      document.getElementById('modalTitle').textContent = '새 대화';
+      document.getElementById('modalOk').textContent = '대화 시작';
+      extra.innerHTML = '';
+    } else {
+      document.getElementById('modalTitle').textContent = `${roomName(current)} · ${audience(current).length}명`;
+      document.getElementById('modalOk').textContent = '초대하기';
+      extra.innerHTML = `<p class="muted" style="margin:8px 0 4px">참여자</p><p>${audience(current).map(u => `${esc(nameOf(u))}${online(u) ? ' 🟢' : ''}`).join(', ')}</p>
+        <button class="btn ghost sm" id="leaveBtn" style="color:var(--bad)">이 방 나가기</button>`;
+      extra.querySelector('#leaveBtn').onclick = async () => {
+        if (!confirm('이 그룹 대화에서 나갈까요?')) return;
+        const { error } = await sb.rpc('chat_leave', { p_room: current.id });
+        if (error) return toast(errMsg(error), true);
+        modal.hidden = true;
+        document.getElementById('backBtn').click();
+        loadRooms();
+      };
+    }
+    renderPick();
+    modal.hidden = false;
+    document.getElementById('pickSearch').focus();
+  }
+  document.getElementById('newChatBtn').onclick = () => openModal('new');
+  document.getElementById('roomMenuBtn').onclick = () => openModal('invite');
+  document.getElementById('modalCancel').onclick = () => (modal.hidden = true);
+  modal.onclick = (e) => { if (e.target === modal) modal.hidden = true; };
+  document.getElementById('modalOk').onclick = async () => {
+    const ids = [...document.querySelectorAll('#pickList input:checked')].map(i => i.value);
+    if (!ids.length) return toast('대화할 직원을 골라 주세요.', true);
+    let room, error;
+    if (modalMode === 'invite') {
+      ({ error } = await sb.rpc('chat_add_members', { p_room: current.id, p_members: ids }));
+      room = current.id;
+    } else if (ids.length === 1) {
+      ({ data: room, error } = await sb.rpc('chat_open_dm', { p_user: ids[0] }));
+    } else {
+      const name = document.getElementById('groupName').value.trim();
+      ({ data: room, error } = await sb.rpc('chat_create_group', { p_name: name, p_members: ids }));
+    }
+    if (error) return toast(errMsg(error), true);
+    modal.hidden = true;
+    await loadRooms();
+    openRoom(room);
+  };
+
+  // ----- 시작 -----
+  await Promise.all([loadPeople(), loadPresence()]);
+  await loadRooms();
+  const fromHash = location.hash.slice(1);
+  if (fromHash) openRoom(fromHash, { fromHash: true });
+  else if (window.innerWidth > 760 && rooms[0]) openRoom(rooms[0].id);
+  window.addEventListener('hashchange', () => {
+    const id = location.hash.slice(1);
+    if (id && (!current || current.id !== id)) openRoom(id, { fromHash: true });
+  });
+
+  // 실시간: 새 메시지 · 읽음 · 접속 상태
+  let roomsT, presT;
+  sb.channel('chat-page')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_messages' }, (p) => {
+      const row = p.new || {};
+      if (current && row.room_id === current.id) {
+        const i = msgs.findIndex(m => m.id === row.id);
+        if (i >= 0) msgs[i] = row; else msgs.push(row);
+        const box = document.getElementById('msgs');
+        const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+        renderMessages();
+        if (atBottom || row.user_id === me.id) box.scrollTop = box.scrollHeight;
+        if (row.user_id !== me.id) markRead();
+      }
+      clearTimeout(roomsT); roomsT = setTimeout(loadRooms, 400);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_members' }, (p) => {
+      const row = p.new || {};
+      const list = membersOf[row.room_id] = membersOf[row.room_id] || [];
+      const i = list.findIndex(x => x.user_id === row.user_id);
+      if (i >= 0) list[i] = row; else if (row.user_id) list.push(row);
+      if (current && row.room_id === current.id) renderMessages();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'presence' }, () => {
+      clearTimeout(presT);
+      presT = setTimeout(async () => { await loadPresence(); renderRooms(); if (current) renderHead(); }, 1000);
+    })
+    .subscribe();
+  // 실시간이 끊겨도 30초마다 맞춘다
+  setInterval(async () => {
+    await Promise.all([loadPresence(), loadRooms()]);
+    if (current && !document.hidden) {
+      const last = msgs[msgs.length - 1];
+      let q = sb.from('chat_messages').select('*').eq('room_id', current.id).order('created_at');
+      if (last) q = q.gt('created_at', last.created_at);
+      const { data } = await q;
+      if (data && data.length) { msgs = msgs.concat(data.filter(d => !msgs.some(m => m.id === d.id))); renderMessages(); markRead(); }
+    }
+  }, 30000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && current) markRead(); });
+})().catch(e => console.warn(e.message));
+</script>
+</body>
+</html>
