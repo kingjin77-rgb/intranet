@@ -12,10 +12,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=4.0.0">
+<link rel="stylesheet" href="style.css?v=5.0.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=4.0.0"></script>
-<script src="app.js?v=4.0.0"></script>
+<script src="config.js?v=5.0.0"></script>
+<script src="app.js?v=5.0.0"></script>
 </head>
 <body>
 <main class="container">
@@ -65,6 +65,27 @@
     </div>
     <div class="btn-row"><button class="btn ghost sm" id="copyInvite">초대 안내 문구 복사</button></div>
   </div>
+  <div class="card v5-card" id="storage" hidden>
+    <h2>💾 저장공간 (무료 플랜 한도)</h2>
+    <div class="usage"><span>파일</span><div class="bar"><div id="fileBar"></div></div><b id="fileUse"></b></div>
+    <div class="usage"><span>DB</span><div class="bar"><div id="dbBar"></div></div><b id="dbUse"></b></div>
+    <p class="muted" style="margin-top:8px">80%를 넘으면 매일 아침 관리자에게 알림이 갑니다. 가득 차면 업로드가 막히니 큰 파일 정리나 유료 플랜(Pro, 월 $25 · 파일 100GB)을 검토하세요.</p>
+  </div>
+
+  <div class="card v5-card" id="backupCard" hidden>
+    <h2>📦 백업</h2>
+    <p class="muted">무료 플랜은 자동 백업이 없습니다. <b>한 달에 한 번</b> 아래 버튼으로 내려받아 회사 PC·클라우드에 보관하세요. (문서·사건·업무·일정·상담·입금·공지·근태 등 기록 전체 / 파일 원본과 1:1 채팅은 제외)</p>
+    <div class="btn-row"><button class="btn" id="backupBtn">⬇ 전체 기록 백업 받기 (.json)</button></div>
+    <p class="muted" id="backupInfo"></p>
+  </div>
+
+  <div class="card v5-card" id="logCard" hidden>
+    <h2>🧾 활동 기록 <span class="count" id="logCount"></span></h2>
+    <div class="filter-row">
+      <select id="logFilter"><option value="">전체</option><option value="download">다운로드</option><option value="delete">삭제</option><option value="profile">권한·사용 변경</option><option value="offboard">퇴사 처리</option><option value="export">내보내기</option></select>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>시간</th><th>누가</th><th>무엇</th><th>대상</th></tr></thead><tbody id="logRows"></tbody></table></div>
+  </div>
 </main>
 <script>
 (async () => {
@@ -91,9 +112,11 @@
         <td class="muted">${esc(x.email)}</td>
         <td><select name="role"><option value="member" ${x.role === 'member' ? 'selected' : ''}>일반</option><option value="admin" ${x.role === 'admin' ? 'selected' : ''}>관리자</option></select></td>
         <td><input type="checkbox" name="active" ${x.active ? 'checked' : ''} title="해제하면 로그인해도 아무것도 볼 수 없습니다 (퇴사자)"></td>
-        <td><button class="btn ghost sm" data-act="save">저장</button></td>
+        <td><button class="btn ghost sm" data-act="save">저장</button>
+          ${x.active && x.id !== me.id ? '<button class="btn ghost sm v5-only" data-act="offboard" hidden style="color:var(--bad)">퇴사 처리</button>' : ''}</td>
       </tr>`).join('');
 
+    App.hasV5().then(ok => document.querySelectorAll('.v5-only').forEach(el => (el.hidden = !ok)));
     const pend = a.data.filter(x => !joined.has(x.email));
     document.getElementById('pending').innerHTML = pend.length ? pend.map(x => `
       <tr><td>${esc(x.name)}</td><td>${esc(x.dept || '')}</td><td>${esc(x.email)}</td>
@@ -130,6 +153,20 @@
       if (error) return toast(errMsg(error), true);
       toast('저장했습니다.');
       load();
+    } else if (b.dataset.act === 'offboard') {
+      const uid = b.closest('tr').dataset.id;
+      const who = b.closest('tr').querySelector('[name=name]').value;
+      const others = (await App.loadMembers()).filter(m => m.id !== uid);
+      const list = others.map((m, i) => `${i + 1}. ${m.name}`).join('\n');
+      const pick = prompt(`${who}님을 퇴사 처리합니다.\n진행 중인 업무·컨펌·휴가 승인을 넘겨받을 직원 번호를 입력하세요.\n\n${list}`);
+      if (!pick) return;
+      const to = others[+pick - 1];
+      if (!to) return toast('번호를 다시 확인해 주세요.', true);
+      if (!confirm(`${who}님 → ${to.name}님에게 인계하고, ${who}님 계정을 사용 중지할까요?`)) return;
+      const { data, error } = await sb.rpc('offboard_user', { p_user: uid, p_to: to.id });
+      if (error) return toast(errMsg(error), true);
+      toast(data || '처리했습니다.');
+      load(); loadSafety();
     } else if (b.dataset.act === 'uninvite') {
       const { error } = await sb.from('allowed_emails').delete().eq('email', b.dataset.email);
       if (error) return toast(errMsg(error), true);
@@ -170,6 +207,67 @@
   }
   loadStatus();
   setInterval(() => { if (!document.hidden) loadStatus(); }, 30000);
+
+  // ----- 안전·운영 (008 실행 후) -----
+  const ACTION = { download: '⬇ 다운로드', delete: '🗑 삭제', profile: '👤 권한 변경', offboard: '🚪 퇴사 처리', export: '📤 내보내기', open_file: '📂 파일 열기' };
+  const TYPE = { documents: '문서', comments: '코멘트', templates: '자료실', cases: '사건', tasks: '업무', notices: '공지', events: '일정', profiles: '직원', attendance: '근태', backup: '백업' };
+  const mb = (n) => (n / 1048576).toFixed(n < 10485760 ? 1 : 0);
+  async function loadSafety() {
+    if (!(await App.hasV5())) return;
+    document.querySelectorAll('.v5-card').forEach(el => (el.hidden = false));
+    const { data: u } = await sb.rpc('storage_usage');
+    const r = Array.isArray(u) ? u[0] : u;
+    if (r) {
+      const fp = Math.min(100, r.file_bytes / (1024 * 1048576) * 100), dp = Math.min(100, r.db_bytes / (500 * 1048576) * 100);
+      document.getElementById('fileBar').style.width = fp + '%';
+      document.getElementById('dbBar').style.width = dp + '%';
+      document.getElementById('fileBar').className = fp > 80 ? 'warn' : '';
+      document.getElementById('dbBar').className = dp > 80 ? 'warn' : '';
+      document.getElementById('fileUse').textContent = `${mb(r.file_bytes)} / 1024 MB (${fp.toFixed(1)}%) · 파일 ${r.file_count}개`;
+      document.getElementById('dbUse').textContent = `${mb(r.db_bytes)} / 500 MB (${dp.toFixed(1)}%)`;
+    }
+    let q = sb.from('activity_log').select('*').order('created_at', { ascending: false }).limit(200);
+    const f = document.getElementById('logFilter').value;
+    if (f) q = q.eq('action', f);
+    const { data: logs } = await q;
+    const ppl = Object.fromEntries((await App.loadMembers()).map(m => [m.id, m.name]));
+    document.getElementById('logCount').textContent = `최근 ${(logs || []).length}건`;
+    document.getElementById('logRows').innerHTML = (logs || []).length ? logs.map(l => `<tr>
+      <td class="muted">${esc(App.fmtDate(l.created_at))}</td><td>${esc(ppl[l.user_id] || '(시스템/퇴사자)')}</td>
+      <td>${ACTION[l.action] || esc(l.action)}</td><td>${esc(TYPE[l.target_type] || l.target_type || '')} ${esc(l.detail || '')}</td></tr>`).join('')
+      : '<tr><td colspan="4" class="muted">기록이 없습니다</td></tr>';
+  }
+  document.getElementById('logFilter').onchange = loadSafety;
+  document.getElementById('backupBtn').onclick = async (e) => {
+    e.target.disabled = true;
+    const tables = ['profiles', 'allowed_emails', 'documents', 'approval_steps', 'comments', 'document_views', 'cases', 'events',
+      'tasks', 'consultations', 'payments', 'notices', 'notice_reads', 'templates', 'comment_reactions', 'chat_rooms', 'chat_members',
+      'leave_requests', 'attendance', 'resources', 'bookings', 'activity_log'];
+    const out = { exported_at: new Date().toISOString(), by: me.email, tables: {} };
+    let rows = 0;
+    for (const t of tables) {
+      document.getElementById('backupInfo').textContent = `${t} 받는 중…`;
+      const all = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await sb.from(t).select('*').range(from, from + 999);
+        if (error || !data) break;
+        all.push(...data);
+        if (data.length < 1000) break;
+      }
+      out.tables[t] = all; rows += all.length;
+    }
+    // 전체 채팅방 메시지는 모두의 기록이라 포함 (1:1·그룹은 개인 대화라 제외)
+    const allRoom = (out.tables.chat_rooms || []).find(r => r.kind === 'all');
+    if (allRoom) {
+      const { data } = await sb.from('chat_messages').select('*').eq('room_id', allRoom.id).limit(10000);
+      out.tables.chat_messages_all_room = data || [];
+    }
+    App.saveFile(new Blob([JSON.stringify(out, null, 1)], { type: 'application/json' }), `intranet_backup_${App.ymdLocal(new Date())}.json`);
+    App.logActivity('export', 'backup', '', `${rows}행`);
+    document.getElementById('backupInfo').textContent = `완료: ${rows.toLocaleString()}행을 받았습니다. 파일을 안전한 곳에 보관하세요.`;
+    e.target.disabled = false;
+  };
+  loadSafety();
 })().catch(e => console.warn(e.message));
 </script>
 </body>

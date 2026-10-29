@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>검색 · 사내 인트라넷</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1a4f8a">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="인트라넷">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="style.css?v=5.0.0">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
+<script src="config.js?v=5.0.0"></script>
+<script src="app.js?v=5.0.0"></script>
+</head>
+<body>
+<main class="container" style="max-width:860px">
+  <div class="page-title">🔍 통합 검색</div>
+  <form id="sForm" class="search-bar">
+    <input type="search" id="q" placeholder="문서·코멘트·채팅·사건·업무·공지·상담을 한 번에 (2글자 이상)" autocomplete="off" autofocus>
+    <button class="btn" type="submit">검색</button>
+  </form>
+  <div class="tabs" id="filters" hidden></div>
+  <div id="results"><p class="muted">예) 의뢰인 이름, 사건번호, 문서 제목, 대화 내용</p></div>
+</main>
+<script>
+(async () => {
+  const { sb, esc, fmtDate, fileIcon } = App;
+  const me = await App.requireAuth();
+  const [v2, v3, v4] = await Promise.all([App.hasV2(), App.hasV3(), App.hasV4()]);
+  const LIMIT = 20;
+  let groups = [], filter = 'all';
+
+  // 검색어에 % , ( ) 같은 특수문자가 있으면 조건식이 깨지므로 지운다
+  const clean = (q) => q.replace(/[%,()*\\]/g, ' ').trim();
+  const mark = (text, q) => {
+    const t = esc(text || '');
+    const i = t.toLowerCase().indexOf(esc(q).toLowerCase());
+    return i < 0 ? t : t.slice(0, i) + '<mark>' + t.slice(i, i + esc(q).length) + '</mark>' + t.slice(i + esc(q).length);
+  };
+  const around = (text, q, n = 60) => {
+    const s = text || '', i = s.toLowerCase().indexOf(q.toLowerCase());
+    if (i < 0) return s.slice(0, n * 2);
+    return (i > n ? '…' : '') + s.slice(Math.max(0, i - n), i + q.length + n) + (i + q.length + n < s.length ? '…' : '');
+  };
+
+  async function search(raw) {
+    const q = clean(raw);
+    if (q.length < 2) { document.getElementById('results').innerHTML = '<p class="muted">2글자 이상 입력하세요.</p>'; return; }
+    history.replaceState(null, '', '?q=' + encodeURIComponent(q));
+    document.getElementById('results').innerHTML = '<p class="muted">검색 중…</p>';
+    const like = `%${q}%`;
+    const jobs = [
+      ['docs', '📄 문서', sb.from('document_summary').select('id,title,description,file_name,file_type,kind,uploader_name,created_at,case_name')
+        .or(`title.ilike.${like},description.ilike.${like},file_name.ilike.${like}`).order('created_at', { ascending: false }).limit(LIMIT),
+        r => ({ href: `doc.html?id=${encodeURIComponent(r.id)}`, icon: r.kind === 'form' ? '📝' : fileIcon(r.file_type, r.file_name), title: r.title,
+                body: r.description || r.file_name, meta: [r.case_name && '⚖️ ' + r.case_name, r.uploader_name, fmtDate(r.created_at)] })],
+      ['comments', '💬 코멘트', sb.from('comments').select('id,doc_id,body,created_at,profiles(name),documents(title)').ilike('body', like).order('created_at', { ascending: false }).limit(LIMIT),
+        r => ({ href: `doc.html?id=${encodeURIComponent(r.doc_id)}`, icon: '💬', title: (r.documents && r.documents.title) || '문서', body: r.body,
+                meta: [r.profiles && r.profiles.name, fmtDate(r.created_at)] })],
+    ];
+    if (v4) jobs.push(['chat', '🗨️ 채팅', sb.from('chat_messages').select('id,room_id,body,created_at,profiles(name),chat_rooms(kind,name)').ilike('body', like).is('deleted_at', null).order('created_at', { ascending: false }).limit(LIMIT),
+      r => ({ href: `chat.html#${r.room_id}`, icon: '🗨️', title: r.chat_rooms && r.chat_rooms.kind === 'all' ? '전체 채팅' : (r.chat_rooms && r.chat_rooms.name) || '1:1 대화', body: r.body,
+              meta: [r.profiles && r.profiles.name, fmtDate(r.created_at)] })]);
+    if (v2) jobs.push(['cases', '⚖️ 사건', sb.from('cases').select('id,name,client,court,case_no,memo,status').or(`name.ilike.${like},client.ilike.${like},case_no.ilike.${like},court.ilike.${like},memo.ilike.${like}`).limit(LIMIT),
+      r => ({ href: `case.html?id=${encodeURIComponent(r.id)}`, icon: '⚖️', title: r.name, body: [r.client, r.court, r.case_no].filter(Boolean).join(' · ') + (r.memo ? ' · ' + r.memo : ''),
+              meta: [r.status === 'closed' ? '종결' : '진행 중'] })]);
+    if (v2) jobs.push(['events', '📅 일정', sb.from('events').select('id,title,location,memo,starts_at').or(`title.ilike.${like},location.ilike.${like},memo.ilike.${like}`).order('starts_at', { ascending: false }).limit(LIMIT),
+      r => ({ href: 'calendar.html', icon: '📅', title: r.title, body: [r.location, r.memo].filter(Boolean).join(' · '), meta: [fmtDate(r.starts_at)] })]);
+    if (v3) {
+      jobs.push(['tasks', '📌 업무', sb.from('tasks').select('id,title,memo,status,due_date').or(`title.ilike.${like},memo.ilike.${like}`).order('created_at', { ascending: false }).limit(LIMIT),
+        r => ({ href: 'tasks.html', icon: r.status === 'done' ? '✅' : '📌', title: r.title, body: r.memo, meta: [r.due_date && '마감 ' + r.due_date] })]);
+      jobs.push(['notices', '📢 공지', sb.from('notices').select('id,title,body,created_at').or(`title.ilike.${like},body.ilike.${like}`).order('created_at', { ascending: false }).limit(LIMIT),
+        r => ({ href: `notices.html#${r.id}`, icon: '📢', title: r.title, body: r.body, meta: [fmtDate(r.created_at)] })]);
+      jobs.push(['consults', '📞 상담', sb.from('consultations').select('id,client_name,phone,summary,status,created_at').or(`client_name.ilike.${like},phone.ilike.${like},summary.ilike.${like}`).order('created_at', { ascending: false }).limit(LIMIT),
+        r => ({ href: 'consults.html', icon: '📞', title: r.client_name, body: [r.phone, r.summary].filter(Boolean).join(' · '), meta: [fmtDate(r.created_at)] })]);
+      jobs.push(['library', '📁 자료실', sb.from('templates').select('id,title,memo,file_name,category').or(`title.ilike.${like},memo.ilike.${like},file_name.ilike.${like}`).limit(LIMIT),
+        r => ({ href: 'library.html', icon: '📁', title: r.title, body: [r.category, r.file_name, r.memo].filter(Boolean).join(' · '), meta: [] })]);
+    }
+    const res = await Promise.all(jobs.map(j => j[2]));
+    groups = jobs.map((j, i) => ({ key: j[0], label: j[1], items: (res[i].data || []).map(j[3]) })).filter(g => g.items.length);
+    render(q);
+  }
+
+  function render(q) {
+    const total = groups.reduce((a, g) => a + g.items.length, 0);
+    const f = document.getElementById('filters');
+    f.hidden = !groups.length;
+    if (!groups.some(g => g.key === filter)) filter = 'all';
+    f.innerHTML = `<button class="tab${filter === 'all' ? ' active' : ''}" data-f="all">전체 ${total}</button>` +
+      groups.map(g => `<button class="tab${filter === g.key ? ' active' : ''}" data-f="${g.key}">${g.label} ${g.items.length}${g.items.length >= LIMIT ? '+' : ''}</button>`).join('');
+    const shown = groups.filter(g => filter === 'all' || g.key === filter);
+    document.getElementById('results').innerHTML = shown.length ? shown.map(g => `<section class="card search-group">
+      <h2>${g.label}</h2>
+      ${g.items.map(it => `<a class="search-item" href="${it.href}">
+        <span class="si-icon">${it.icon}</span>
+        <span class="si-main"><b>${mark(it.title, q)}</b>
+          ${it.body ? `<span class="si-body">${mark(around(it.body, q), q)}</span>` : ''}
+          <span class="si-meta">${it.meta.filter(Boolean).map(esc).join(' · ')}</span></span></a>`).join('')}
+    </section>`).join('') : `<p class="muted">"${esc(q)}" 검색 결과가 없습니다.</p>`;
+  }
+  document.getElementById('filters').onclick = (e) => {
+    const b = e.target.closest('[data-f]');
+    if (b) { filter = b.dataset.f; render(clean(document.getElementById('q').value)); }
+  };
+  document.getElementById('sForm').onsubmit = (e) => { e.preventDefault(); search(document.getElementById('q').value); };
+  const init = new URLSearchParams(location.search).get('q');
+  if (init) { document.getElementById('q').value = init; search(init); }
+})().catch(e => console.warn(e.message));
+</script>
+</body>
+</html>

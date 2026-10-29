@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '4.0.0';
+  const APP_VERSION = '5.0.0';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -55,8 +55,10 @@
     if (m.includes('same as the old')) return '기존 비밀번호와 다르게 정해 주세요.';
     if (m.includes('Database error saving new user') || m.includes('초대되지 않은')) return '초대되지 않은 이메일입니다. 관리자에게 등록을 요청하세요.';
     if (m.includes('Token has expired') || m.includes('invalid')) return '인증 코드가 올바르지 않거나 만료되었습니다.';
-    if (/schema cache|does not exist/.test(m) && /comment_reactions|attachments|add_approvers|extra_files|create_document_v3|chat_|presence|admin_user_status/.test(m))
-      return /chat_|presence|admin_user_status/.test(m)
+    if (/schema cache|does not exist/.test(m) && /comment_reactions|attachments|add_approvers|extra_files|create_document_v3|chat_|presence|admin_user_status|leave_|attendance|bookings|resources|clock|nudge_doc|set_doc_due|toggle_comment|storage_usage|offboard|activity_log/.test(m))
+      return /leave_|attendance|bookings|resources|clock|nudge_doc|set_doc_due|toggle_comment|storage_usage|offboard|activity_log/.test(m)
+        ? 'DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/008_v5.sql 을 실행하면 바로 됩니다.'
+        : /chat_|presence|admin_user_status/.test(m)
         ? 'DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/007_chat.sql 을 실행하면 바로 됩니다.'
         : /extra_files|create_document_v3/.test(m)
         ? 'DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/006_files.sql 을 실행하면 바로 됩니다.'
@@ -130,8 +132,10 @@
           <a href="consults.html">상담</a>
           <a href="notices.html">공지</a>
           <a href="library.html">자료실</a>
+          <a href="office.html">근태·예약</a>
           <a href="upload.html">＋ 올리기</a>
           ${profile && profile.role === 'admin' ? '<a href="admin.html">직원관리</a>' : ''}
+          <a href="search.html" title="통합 검색">🔍 검색</a>
           <a href="help.html" title="PC·휴대폰 설치 안내">❓ 설치</a>
           ${profile && 'Notification' in window && Notification.permission === 'default' ? '<button id="notifyBtn">🔔 알림 켜기</button>' : ''}
           ${profile ? `<button id="meBtn" title="비밀번호 설정">👤 ${esc(profile.name)}</button><button id="logoutBtn">로그아웃</button>` : ''}
@@ -304,6 +308,12 @@
       if (mine.error || myCm.error || mySteps.error) return;
       const myIds = mine.data.map(d => d.id);
       const related = [...new Set([...myIds, ...myCm.data.map(r => r.doc_id), ...mySteps.data.map(r => r.doc_id)])];
+      // 다른 문서라도 나를 @언급한 코멘트
+      let mention = { data: [] };
+      try {
+        if (me.name) mention = await sb.from('comments').select('id,doc_id,body,user_id,created_at,profiles(name),documents(title)')
+          .ilike('body', `%@${me.name}%`).neq('user_id', me.id).gt('created_at', since).limit(10);
+      } catch (e) { console.warn('멘션 확인 실패', e); }
       const [cm, vw] = await Promise.all([
         related.length ? sb.from('comments').select('id,doc_id,body,user_id,created_at,profiles(name),documents(title)')
           .in('doc_id', related).neq('user_id', me.id).gt('created_at', since).order('created_at') : { data: [] },
@@ -313,12 +323,14 @@
       if (cm.error || vw.error) return;
       const status = Object.fromEntries(mine.data.map(d => [d.id, d.status]));
       if (st) {
-        cm.data.forEach(c => notify(`💬 ${(c.profiles && c.profiles.name) || ''}: ${(c.documents && c.documents.title) || ''}`, (c.body || '📎 첨부').slice(0, 80), c.doc_id));
+        const mentioned = new Set((mention.data || []).map(c => c.id));
+        (mention.data || []).forEach(c => notify(`📣 ${(c.profiles && c.profiles.name) || ''}님이 언급: ${(c.documents && c.documents.title) || ''}`, c.body.slice(0, 80), c.doc_id));
+        cm.data.filter(c => !mentioned.has(c.id)).forEach(c => notify(`💬 ${(c.profiles && c.profiles.name) || ''}: ${(c.documents && c.documents.title) || ''}`, (c.body || '📎 첨부').slice(0, 80), c.doc_id));
         vw.data.forEach(v => notify(`👀 ${(v.profiles && v.profiles.name) || ''}님이 확인했습니다`, (v.documents && v.documents.title) || '', v.doc_id));
         mine.data.filter(d => st.status[d.id] === 'pending' && d.status !== 'pending')
           .forEach(d => notify(d.status === 'approved' ? `🎉 최종 컨펌완료: ${d.title}` : `↩️ 반려: ${d.title}`, '', d.id));
       }
-      const next = [since, ...cm.data.map(c => c.created_at), ...vw.data.map(v => v.first_viewed_at)]
+      const next = [since, ...cm.data.map(c => c.created_at), ...vw.data.map(v => v.first_viewed_at), ...(mention.data || []).map(c => c.created_at)]
         .reduce((a, b) => (new Date(b) > new Date(a) ? b : a));
       try { localStorage.setItem(WATCH_ACT, JSON.stringify({ user: me.id, since: next, status })); } catch {}
     }
@@ -449,7 +461,73 @@
       .then(({ error, data }) => !error && Array.isArray(data), () => false);
     return v2Promise;
   }
-  let v3Promise, v4Promise;
+  let v3Promise, v4Promise, v5Promise;
+  function hasV5() {
+    if (!v5Promise) v5Promise = sb.from('leave_requests').select('id').limit(1)
+      .then(({ error, data }) => !error && Array.isArray(data), () => false);
+    return v5Promise;
+  }
+  const V5_NOTICE = '<div class="notice">이 기능을 쓰려면 DB 업데이트가 필요합니다. 관리자가 Supabase에서 <b>migrations/008_v5.sql</b>을 실행하면 바로 켜집니다.</div>';
+  // 파일 저장 (링크를 문서에 붙였다 떼야 파일 이름이 지켜진다)
+  function saveFile(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+  // 컨펌 기한 배지: D-3 / 오늘까지 / 기한 지남
+  function dueBadge(due) {
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    const n = Math.round((new Date(due + 'T00:00:00') - t) / 86400000);
+    return n < 0 ? `<span class="badge rejected">⏰ ${-n}일 지남</span>` : n === 0 ? '<span class="badge pending">⏰ 오늘까지</span>'
+      : `<span class="badge none">⏰ D-${n}</span>`;
+  }
+  // 다운로드 같은 활동 기록 (008 전이면 조용히 넘어감)
+  function logActivity(action, type, id, detail) {
+    sb.rpc('log_activity', { p_action: action, p_target_type: type, p_target_id: String(id || ''), p_detail: detail || '' }).then(() => {}, () => {});
+  }
+  // 입력칸에서 @ 를 치면 직원 이름 추천
+  function attachMention(ta, getNames) {
+    const box = document.createElement('div');
+    box.className = 'mention-box';
+    box.hidden = true;
+    ta.parentElement.style.position = ta.parentElement.style.position || 'relative';
+    ta.insertAdjacentElement('afterend', box);
+    let start = -1, items = [], sel = 0;
+    const close = () => { box.hidden = true; start = -1; };
+    const pick = (name) => {
+      const pos = ta.selectionStart;
+      ta.value = ta.value.slice(0, start) + '@' + name + ' ' + ta.value.slice(pos);
+      ta.selectionStart = ta.selectionEnd = start + name.length + 2;
+      close(); ta.focus(); ta.dispatchEvent(new Event('input'));
+    };
+    ta.addEventListener('input', () => {
+      const upto = ta.value.slice(0, ta.selectionStart);
+      const m = upto.match(/(^|\s)@([^\s@]{0,10})$/);
+      if (!m) return close();
+      start = upto.length - m[2].length - 1;
+      items = getNames().filter(n => n && n.includes(m[2])).slice(0, 6);
+      if (!items.length) return close();
+      sel = 0;
+      box.innerHTML = items.map((n, i) => `<button type="button" class="${i ? '' : 'on'}" data-n="${esc(n)}">@${esc(n)}</button>`).join('');
+      box.hidden = false;
+    });
+    ta.addEventListener('keydown', (e) => {
+      if (box.hidden) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        sel = (sel + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length;
+        box.querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', i === sel));
+      } else if ((e.key === 'Enter' || e.key === 'Tab') && !e.isComposing) {
+        e.preventDefault(); e.stopImmediatePropagation(); pick(items[sel]);
+      } else if (e.key === 'Escape') close();
+    }, true);
+    box.addEventListener('mousedown', (e) => { const b = e.target.closest('button'); if (b) { e.preventDefault(); pick(b.dataset.n); } });
+    ta.addEventListener('blur', () => setTimeout(close, 150));
+  }
   let refreshChat = () => {};
   function hasV4() {
     if (!v4Promise) v4Promise = sb.from('chat_rooms').select('id').limit(1)
@@ -570,5 +648,5 @@
     (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
   }
 
-  window.App = { hasV4, V4_NOTICE, refreshChatBadge: () => refreshChat(), snapshotFile, uploadFile, sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, hasV3, V3_NOTICE, TASK_STATUS, CONSULT_STATUS, ymdLocal, ddayDate, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
+  window.App = { saveFile, dueBadge, hasV5, V5_NOTICE, logActivity, attachMention, hasV4, V4_NOTICE, refreshChatBadge: () => refreshChat(), snapshotFile, uploadFile, sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, hasV3, V3_NOTICE, TASK_STATUS, CONSULT_STATUS, ymdLocal, ddayDate, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
 })();
