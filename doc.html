@@ -14,10 +14,11 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=5.1.1">
+<link rel="stylesheet" href="style.css?v=6.0.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=5.1.1"></script>
-<script src="app.js?v=5.1.1"></script>
+<script src="config.js?v=6.0.0"></script>
+<script src="app.js?v=6.0.0"></script>
+<script src="viewer.js?v=6.0.0"></script>
 </head>
 <body>
 <main class="container">
@@ -103,6 +104,12 @@
         </form>
       </div>
 
+      <div class="card" id="markupCard" hidden>
+        <h2>🖍 첨삭 <span class="count" id="markupCount"></span></h2>
+        <div class="mk-filter" id="markupFilter"></div>
+        <ul class="mk-list" id="markupList"></ul>
+      </div>
+
       <div class="card" id="viewsCard">
         <h2>👀 열람 현황 <span class="count" id="viewCount"></span></h2>
         <div class="progress"><div id="viewBar" style="width:0"></div></div>
@@ -170,7 +177,24 @@
     };
     document.getElementById('meta').textContent += ` 외 ${allFiles.length - 1}개`;
   }
-  if (doc.kind === 'form') renderFormDoc(); else await renderFile(allFiles[0]);
+  // 첨삭·전체화면 뷰어 (viewer.js). 이전 버전 첨삭도 겹쳐 볼 수 있게 직전 버전 id 를 넘긴다
+  const [hasV6, prevDoc] = await Promise.all([
+    App.hasV6(),
+    doc.group_id && doc.version > 1
+      ? sb.from('documents').select('id').eq('group_id', doc.group_id).eq('version', doc.version - 1).maybeSingle().then(r => r.data, () => null)
+      : null,
+  ]);
+  Viewer.init({
+    doc, me, nameOf, hasV6, prevDocId: prevDoc && prevDoc.id,
+    avatar: (uid) => avatar(uid),
+    onChange: () => renderMarkupList(),
+    switchFile: async (path) => {
+      const i = allFiles.findIndex(f => f.path === path);
+      const b = document.querySelector(`#fileTabs .tab[data-i="${i}"]`);
+      if (b && !b.classList.contains('active')) { b.click(); await new Promise(r => setTimeout(r, 900)); }
+    },
+  });
+  if (doc.kind === 'form') { Viewer.plain(''); renderFormDoc(); } else await renderFile(allFiles[0]);
 
   // 양식(기안서·지급품의서·출장신청서)은 파일 대신 내용 카드로 보여준다
   function renderFormDoc() {
@@ -200,19 +224,29 @@
 
     const lower = f.name.toLowerCase();
     const noPreview = (msg) => {
+      Viewer.plain(f.path);
       openBtn.hidden = true;
       viewer.innerHTML = `<div class="file-box"><span class="icon">${fileIcon(f.type, f.name)}</span>
         <div><div class="name">${esc(f.name)}</div>
         <p class="muted">${msg} 위의 <b>다운로드</b>를 눌러 확인하세요. (PDF로 올리면 바로 볼 수 있어요)</p></div></div>`;
     };
     if (viewUrl && (f.type === 'application/pdf' || lower.endsWith('.pdf'))) {
-      viewer.innerHTML = `<iframe class="viewer" src="${esc(viewUrl)}" title="${esc(f.name)}"></iframe>
-        <p class="muted" style="margin-top:6px">휴대폰에서 안 보이면 위의 <b>새 창에서 열기</b>를 누르세요.</p>`;
+      // pdf.js 로 직접 그려야 그 위에 첨삭을 겹칠 수 있다. 실패하면 브라우저 기본 뷰어로
+      viewer.innerHTML = '<p class="muted">PDF 불러오는 중…</p>';
+      try {
+        await Viewer.pdf(viewUrl, f.path);
+      } catch (e) {
+        console.warn('pdf.js 실패, 기본 뷰어로', e);
+        Viewer.plain(f.path);
+        viewer.innerHTML = `<iframe class="viewer" src="${esc(viewUrl)}" title="${esc(f.name)}"></iframe>
+          <p class="muted" style="margin-top:6px">휴대폰에서 안 보이면 위의 <b>새 창에서 열기</b>를 누르세요.</p>`;
+      }
     } else if (viewUrl && (f.type || '').startsWith('image/')) {
-      viewer.innerHTML = `<img src="${esc(viewUrl)}" alt="${esc(f.name)}" style="max-width:100%;border-radius:10px">`;
+      Viewer.image(viewUrl, f.name, f.path);
     } else if (viewUrl && /\.(docx|xlsx)$/.test(lower)) {
       // 워드·엑셀은 이 브라우저 안에서 직접 그린다 (파일이 외부 서버로 나가지 않음)
       openBtn.hidden = true;
+      Viewer.plain(f.path);
       viewer.innerHTML = '<p class="muted">미리보기 준비 중…</p>';
       renderOffice(lower.endsWith('.docx') ? 'docx' : 'xlsx', viewUrl).catch((e) => {
         console.warn(e);
@@ -230,25 +264,21 @@
       if (kind === 'docx') {
         await App.loadScript(CDN + 'jszip@3.10.2/dist/jszip.min.js');
         await App.loadScript(CDN + 'docx-preview@0.4.1/dist/docx-preview.min.js');
-        viewer.innerHTML = `<div class="btn-row" style="margin:0 0 8px"><button class="btn ghost sm" id="zoomBtn">🔍 크게 보기</button></div>
-          <div class="office-view docx-view"></div>`;
+        viewer.innerHTML = '<div class="office-view docx-view"></div>';
         const box = viewer.querySelector('.docx-view');
-        let actual = false;
+        let z = 1;
         await window.docx.renderAsync(data, box, null, { inWrapper: true, ignoreLastRenderedPageBreak: true });
         // A4 페이지가 상자보다 넓으면 상자 폭에 맞춰 줄인다 (휴대폰 포함)
         const fit = () => {
           const wrap = box.querySelector('.docx-wrapper'), page = box.querySelector('section.docx');
           if (!wrap || !page) return;
+          // 폭에 맞춘 크기(1) 기준으로 뷰어 툴바의 확대·축소 배율을 곱한다
           wrap.style.zoom = '';
-          if (!actual) wrap.style.zoom = Math.min(1, (box.clientWidth - 8) / (page.offsetWidth + 24));
+          wrap.style.zoom = Math.min(1, (box.clientWidth - 8) / (page.offsetWidth + 24)) * z;
         };
         fit();
-        document.getElementById('zoomBtn').onclick = (e) => {
-          actual = !actual;
-          e.target.textContent = actual ? '↔ 화면에 맞추기' : '🔍 크게 보기';
-          fit();
-        };
-        window.addEventListener('resize', fit);
+        window.addEventListener('resize', () => fit());
+        Viewer.docxPages(box, (nz) => { z = nz; fit(); }, f.path);
         return;
       }
       await App.loadScript(CDN + 'exceljs@4.4.0/dist/exceljs.min.js');
@@ -776,6 +806,39 @@
 
   // 한 카드가 실패해도 나머지는 그려지도록 따로 기다린다
   loadVersions().catch(e => console.warn(e));
+  Viewer.start();
+
+  // ----- 첨삭 목록: 밑줄·메모·도장은 '고침 체크'를 할 수 있다 -----
+  var markFilter = 'all';  // var: 뷰어가 먼저 그려질 때도 참조할 수 있게
+  function renderMarkupList() {
+    const items = Viewer.anns.filter(a => ['underline', 'note', 'stamp', 'highlight', 'pen'].includes(a.kind) && !String(a.id).startsWith('tmp'));
+    const cardEl = document.getElementById('markupCard');
+    cardEl.hidden = !items.length;
+    if (!items.length) return;
+    const open = items.filter(a => a.kind !== 'pen' && a.kind !== 'highlight' && !a.checked_at).length;
+    document.getElementById('markupCount').textContent = `${items.length}${open ? ` · 고칠 것 ${open}` : ''}`;
+    const fname = (p) => (allFiles.find(f => f.path === p) || {}).name || '';
+    document.getElementById('markupFilter').innerHTML = [['all', '전체'], ['todo', '고칠 것'], ['done', '확인됨']]
+      .map(([k, v]) => `<button type="button" class="chip${markFilter === k ? ' on' : ''}" data-f="${k}">${v}</button>`).join('');
+    const rows = items.filter(a => markFilter === 'all' || (markFilter === 'todo' ? !a.checked_at : !!a.checked_at))
+      .sort((a, b) => (a.file_path > b.file_path) - (a.file_path < b.file_path) || a.page - b.page || (a.created_at < b.created_at ? -1 : 1));
+    document.getElementById('markupList').innerHTML = rows.map(a => `
+      <li class="mk-item${a.checked_at ? ' done' : ''}">
+        ${Viewer.canCheck(a) ? `<button type="button" class="mk-check" data-chk="${esc(a.id)}" title="고침 체크">${a.checked_at ? '☑' : '☐'}</button>` : `<span class="mk-check">${a.checked_at ? '☑' : '☐'}</span>`}
+        <button type="button" class="mk-go" data-go="${esc(a.id)}">
+          <span class="mk-top">${avatar(a.user_id)}<b>${esc(nameOf[a.user_id] || '(퇴사자)')}</b>
+            <span class="muted">${Viewer.KIND_LABEL[a.kind] || ''} · ${allFiles.length > 1 ? esc(fname(a.file_path)) + ' ' : ''}p.${a.page}</span></span>
+          ${a.kind === 'note' ? `<span class="mk-body">${esc(a.body || '')}</span>` : a.kind === 'stamp' ? `<span class="mk-body">🔖 ${esc(Viewer.STAMPS[a.body] || '')}</span>` : ''}
+          <span class="mk-meta">${esc(fmtDate(a.created_at))}${a.checked_at ? ` · ✔ ${esc(nameOf[a.checked_by] || '')} 확인` : ''}</span>
+        </button>
+      </li>`).join('') || '<li class="muted">해당 항목이 없습니다.</li>';
+  }
+  document.getElementById('markupCard').addEventListener('click', (e) => {
+    const f = e.target.closest('[data-f]'), c = e.target.closest('[data-chk]'), g = e.target.closest('[data-go]');
+    if (f) { markFilter = f.dataset.f; renderMarkupList(); }
+    else if (c) Viewer.toggleCheck(c.dataset.chk);
+    else if (g) Viewer.focus(g.dataset.go);
+  });
   await Promise.allSettled([loadSteps(), loadViews(), loadComments().catch(e => console.warn('코멘트 불러오기 실패', e))]);
 
   // 다른 사람의 코멘트·열람·컨펌를 실시간 반영

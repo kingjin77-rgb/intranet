@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '5.1.1';
+  const APP_VERSION = '6.0.0';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -55,6 +55,7 @@
     if (m.includes('same as the old')) return '기존 비밀번호와 다르게 정해 주세요.';
     if (m.includes('Database error saving new user') || m.includes('초대되지 않은')) return '초대되지 않은 이메일입니다. 관리자에게 등록을 요청하세요.';
     if (m.includes('Token has expired') || m.includes('invalid')) return '인증 코드가 올바르지 않거나 만료되었습니다.';
+    if (/schema cache|does not exist/.test(m) && /doc_annotations|set_avatar|toggle_annotation|avatar/.test(m)) return V6_NOTICE_TEXT;
     if (/schema cache|does not exist/.test(m) && /comment_reactions|attachments|add_approvers|extra_files|create_document_v3|chat_|presence|admin_user_status|leave_|attendance|bookings|resources|clock|nudge_doc|set_doc_due|toggle_comment|storage_usage|offboard|activity_log/.test(m))
       return /leave_|attendance|bookings|resources|clock|nudge_doc|set_doc_due|toggle_comment|storage_usage|offboard|activity_log/.test(m)
         ? 'DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/008_v5.sql 을 실행하면 바로 됩니다.'
@@ -468,6 +469,13 @@
       .then(({ error, data }) => !error && Array.isArray(data), () => false);
     return v5Promise;
   }
+  let v6Promise;
+  function hasV6() {
+    if (!v6Promise) v6Promise = sb.from('doc_annotations').select('id').limit(1)
+      .then(({ error, data }) => !error && Array.isArray(data), () => false);
+    return v6Promise;
+  }
+  const V6_NOTICE_TEXT = '첨삭을 쓰려면 DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/010_v6.sql 을 실행하면 바로 켜집니다.';
   const V5_NOTICE = '<div class="notice">이 기능을 쓰려면 DB 업데이트가 필요합니다. 관리자가 Supabase에서 <b>migrations/008_v5.sql</b>을 실행하면 바로 켜집니다.</div>';
   // 파일 저장 (링크를 문서에 붙였다 떼야 파일 이름이 지켜진다)
   function saveFile(blob, name) {
@@ -649,5 +657,5 @@
     (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
   }
 
-  window.App = { saveFile, dueBadge, hasV5, V5_NOTICE, logActivity, attachMention, hasV4, V4_NOTICE, refreshChatBadge: () => refreshChat(), snapshotFile, uploadFile, sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, hasV3, V3_NOTICE, TASK_STATUS, CONSULT_STATUS, ymdLocal, ddayDate, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
+  window.App = { hasV6, V6_NOTICE_TEXT, saveFile, dueBadge, hasV5, V5_NOTICE, logActivity, attachMention, hasV4, V4_NOTICE, refreshChatBadge: () => refreshChat(), snapshotFile, uploadFile, sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, hasV3, V3_NOTICE, TASK_STATUS, CONSULT_STATUS, ymdLocal, ddayDate, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
 })();
