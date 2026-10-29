@@ -14,10 +14,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=3.4.0">
+<link rel="stylesheet" href="style.css?v=3.5.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=3.4.0"></script>
-<script src="app.js?v=3.4.0"></script>
+<script src="config.js?v=3.5.0"></script>
+<script src="app.js?v=3.5.0"></script>
 </head>
 <body>
 <main class="container">
@@ -87,6 +87,7 @@
           <span>${x.kind === 'form' ? '📝' : fileIcon(x.file_type, x.file_name)}</span>
           <span class="title">${esc(x.title)}</span>
           ${x.version > 1 ? `<span class="badge none">v${x.version}</span>` : ''}
+          ${(x.extra_files || []).length ? `<span class="badge none" title="파일 ${x.extra_files.length + 1}개">📎 ${x.extra_files.length + 1}</span>` : ''}
           ${x.current_approver_id === me.id ? '<span class="badge myturn">내 차례</span>' : ''}
           ${!seen.has(x.id) && x.uploader_id !== me.id ? '<span class="badge pending">NEW</span>' : ''}
           ${statusBadge(x.status)}

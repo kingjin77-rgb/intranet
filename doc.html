@@ -14,10 +14,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=3.4.0">
+<link rel="stylesheet" href="style.css?v=3.5.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=3.4.0"></script>
-<script src="app.js?v=3.4.0"></script>
+<script src="config.js?v=3.5.0"></script>
+<script src="app.js?v=3.5.0"></script>
 </head>
 <body>
 <main class="container">
@@ -47,7 +47,7 @@
 
   <div class="detail-grid">
     <div>
-      <div class="card" id="viewerCard"></div>
+      <div class="card" id="viewerCard"><div class="tabs file-tabs" id="fileTabs" hidden></div><div id="viewerBody"></div></div>
 
       <div class="card" id="commentsCard">
         <h2>💬 코멘트 <span class="count" id="commentCount"></span></h2>
@@ -146,8 +146,26 @@
   document.getElementById('desc').textContent = doc.description || '';
 
   const openBtn = document.getElementById('openBtn');
-  const viewer = document.getElementById('viewerCard');
-  if (doc.kind === 'form') renderFormDoc(); else await renderFile();
+  const viewer = document.getElementById('viewerBody');
+  // 파일이 여러 개면 위에 탭을 두고, 누른 파일을 미리보기한다
+  const allFiles = doc.kind === 'form' ? [] : [
+    { path: doc.file_path, name: doc.file_name, type: doc.file_type, size: doc.file_size },
+    ...(Array.isArray(doc.extra_files) ? doc.extra_files : []),
+  ];
+  if (allFiles.length > 1) {
+    const tabs = document.getElementById('fileTabs');
+    tabs.hidden = false;
+    tabs.innerHTML = allFiles.map((f, i) => `<button class="tab${i ? '' : ' active'}" data-i="${i}" title="${esc(f.name)}">${fileIcon(f.type, f.name)} ${esc(f.name)}</button>`).join('');
+    tabs.onclick = (e) => {
+      const b = e.target.closest('.tab');
+      if (!b || b.classList.contains('active')) return;
+      tabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === b));
+      openBtn.hidden = false;
+      renderFile(allFiles[+b.dataset.i]).catch(e => console.warn(e));
+    };
+    document.getElementById('meta').textContent += ` 외 ${allFiles.length - 1}개`;
+  }
+  if (doc.kind === 'form') renderFormDoc(); else await renderFile(allFiles[0]);
 
   // 양식(기안서·지급품의서·출장신청서)은 파일 대신 내용 카드로 보여준다
   function renderFormDoc() {
@@ -164,27 +182,28 @@
     </div>`;
   }
 
-  async function renderFile() {
+  async function renderFile(file) {
+    const f = file;
     const [view, dl] = await Promise.all([
-      sb.storage.from('docs').createSignedUrl(doc.file_path, 3600),
-      sb.storage.from('docs').createSignedUrl(doc.file_path, 3600, { download: doc.file_name }),
+      sb.storage.from('docs').createSignedUrl(f.path, 3600),
+      sb.storage.from('docs').createSignedUrl(f.path, 3600, { download: f.name }),
     ]);
     const viewUrl = view.data && view.data.signedUrl;
     openBtn.href = viewUrl || '#';
     document.getElementById('downloadBtn').href = (dl.data && dl.data.signedUrl) || '#';
 
-    const lower = doc.file_name.toLowerCase();
+    const lower = f.name.toLowerCase();
     const noPreview = (msg) => {
       openBtn.hidden = true;
-      viewer.innerHTML = `<div class="file-box"><span class="icon">${fileIcon(doc.file_type, doc.file_name)}</span>
-        <div><div class="name">${esc(doc.file_name)}</div>
+      viewer.innerHTML = `<div class="file-box"><span class="icon">${fileIcon(f.type, f.name)}</span>
+        <div><div class="name">${esc(f.name)}</div>
         <p class="muted">${msg} 위의 <b>다운로드</b>를 눌러 확인하세요. (PDF로 올리면 바로 볼 수 있어요)</p></div></div>`;
     };
-    if (viewUrl && (doc.file_type === 'application/pdf' || lower.endsWith('.pdf'))) {
-      viewer.innerHTML = `<iframe class="viewer" src="${esc(viewUrl)}" title="${esc(doc.title)}"></iframe>
+    if (viewUrl && (f.type === 'application/pdf' || lower.endsWith('.pdf'))) {
+      viewer.innerHTML = `<iframe class="viewer" src="${esc(viewUrl)}" title="${esc(f.name)}"></iframe>
         <p class="muted" style="margin-top:6px">휴대폰에서 안 보이면 위의 <b>새 창에서 열기</b>를 누르세요.</p>`;
-    } else if (viewUrl && (doc.file_type || '').startsWith('image/')) {
-      viewer.innerHTML = `<img src="${esc(viewUrl)}" alt="${esc(doc.title)}" style="max-width:100%;border-radius:10px">`;
+    } else if (viewUrl && (f.type || '').startsWith('image/')) {
+      viewer.innerHTML = `<img src="${esc(viewUrl)}" alt="${esc(f.name)}" style="max-width:100%;border-radius:10px">`;
     } else if (viewUrl && /\.(docx|xlsx)$/.test(lower)) {
       // 워드·엑셀은 이 브라우저 안에서 직접 그린다 (파일이 외부 서버로 나가지 않음)
       openBtn.hidden = true;
@@ -272,7 +291,8 @@
     del.hidden = false;
     del.onclick = async () => {
       if (!confirm('이 문서와 코멘트·컨펌 기록을 모두 삭제할까요?')) return;
-      if (doc.file_path) await sb.storage.from('docs').remove([doc.file_path]);
+      const paths = [doc.file_path, ...(doc.extra_files || []).map(f => f.path)].filter(Boolean);
+      if (paths.length) await sb.storage.from('docs').remove(paths);
       const { error } = await sb.from('documents').delete().eq('id', docId);
       if (error) return toast(errMsg(error), true);
       location.replace('index.html');
