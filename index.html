@@ -14,10 +14,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=5.1.0">
+<link rel="stylesheet" href="style.css?v=5.1.1">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=5.1.0"></script>
-<script src="app.js?v=5.1.0"></script>
+<script src="config.js?v=5.1.1"></script>
+<script src="app.js?v=5.1.1"></script>
 </head>
 <body>
 <main class="container">
@@ -34,6 +34,7 @@
     <button class="tab" data-tab="myturn">내 컨펌 대기 <span id="myturnCount"></span></button>
     <button class="tab" data-tab="unread">안 읽은 문서 <span id="unreadCount"></span></button>
     <button class="tab" data-tab="mine">내가 올린 문서</button>
+    <button class="tab" data-tab="history">컨펌 기록</button>
   </div>
   <div class="filter-row">
     <input type="text" id="search" placeholder="제목·올린 사람·사건 검색">
@@ -47,18 +48,27 @@
   const { sb, esc, fmtDate, statusBadge, toast, errMsg, fileIcon } = App;
   const me = await App.requireAuth();
 
-  let docs = [], seen = new Set(), memberCount = 0, tab = 'all';
+  let docs = [], allDocs = [], stepsOf = {}, nameOf = {}, seen = new Set(), memberCount = 0, tab = 'all';
+  const ICON = { approved: '✅', rejected: '↩️', current: '⏳', waiting: '⏳', skipped: '—' };
+  const WORD = { approved: '컨펌', rejected: '반려', current: '대기', waiting: '대기', skipped: '—' };
 
   async function load() {
-    const [d, v, m] = await Promise.all([
+    const [d, v, m, s, p] = await Promise.all([
       sb.from('document_summary').select('*').order('created_at', { ascending: false }),
       sb.from('document_views').select('doc_id').eq('user_id', me.id),
       sb.from('profiles').select('id', { count: 'exact', head: true }).eq('active', true),
+      sb.from('approval_steps').select('doc_id,approver_id,state,acted_at,step_order').order('step_order'),
+      sb.from('profiles').select('id,name'),
     ]);
     const err = d.error || v.error || m.error;
     if (err) return toast(errMsg(err), true);
     // 수정본이 있으면 최신본만 목록에 (v2 DB 전이면 is_latest 가 없어서 전부 보임)
+    allDocs = d.data;
     docs = d.data.filter(x => x.is_latest !== false);
+    // 컨펌·반려가 끝나도 누가 어떻게 처리했는지 목록에 남긴다
+    stepsOf = {}; nameOf = {};
+    (s.data || []).forEach(r => (stepsOf[r.doc_id] = stepsOf[r.doc_id] || []).push(r));
+    (p.data || []).forEach(r => nameOf[r.id] = r.name);
     seen = new Set(v.data.map(r => r.doc_id));
     memberCount = m.count || 0;
     render();
@@ -71,14 +81,18 @@
     document.getElementById('myturnCount').textContent = myturn.length ? `(${myturn.length})` : '';
     document.getElementById('unreadCount').textContent = unread.length ? `(${unread.length})` : '';
 
-    let rows = { all: docs, myturn, unread, mine: docs.filter(x => x.uploader_id === me.id) }[tab];
+    // 컨펌 기록: 내가 컨펌자였거나 컨펌을 요청한 문서 전부 (수정본 전 예전 버전 포함), 최근 처리 순
+    const lastAct = (x) => (stepsOf[x.id] || []).reduce((a, r) => r.acted_at && r.acted_at > a ? r.acted_at : a, x.created_at);
+    const history = allDocs.filter(x => (stepsOf[x.id] || []).some(r => r.approver_id === me.id) || (x.uploader_id === me.id && (stepsOf[x.id] || []).length))
+      .sort((a, b) => lastAct(b) < lastAct(a) ? -1 : 1);
+    let rows = { all: docs, myturn, unread, mine: docs.filter(x => x.uploader_id === me.id), history }[tab];
     if (q) rows = rows.filter(x => [x.title, x.uploader_name, x.case_name].some(v => (v || '').toLowerCase().includes(q)));
     const cf = document.getElementById('caseFilter').value;
     if (cf) rows = rows.filter(x => x.case_id === cf);
 
     const list = document.getElementById('list');
     if (!rows.length) {
-      list.innerHTML = `<div class="empty">${tab === 'myturn' ? '컨펌할 문서가 없습니다 👍' : '문서가 없습니다'}</div>`;
+      list.innerHTML = `<div class="empty">${tab === 'myturn' ? '컨펌할 문서가 없습니다 👍' : tab === 'history' ? '컨펌 기록이 없습니다' : '문서가 없습니다'}</div>`;
       return;
     }
     list.innerHTML = rows.map(x => `
@@ -86,7 +100,7 @@
         <div class="row1">
           <span>${x.kind === 'form' ? '📝' : fileIcon(x.file_type, x.file_name)}</span>
           <span class="title">${esc(x.title)}</span>
-          ${x.version > 1 ? `<span class="badge none">v${x.version}</span>` : ''}
+          ${x.version > 1 || x.is_latest === false ? `<span class="badge none">v${x.version}${x.is_latest === false ? " (예전 버전)" : ""}</span>` : ''}
           ${(x.extra_files || []).length ? `<span class="badge none" title="파일 ${x.extra_files.length + 1}개">📎 ${x.extra_files.length + 1}</span>` : ''}
           ${x.current_approver_id === me.id ? '<span class="badge myturn">내 차례</span>' : ''}
           ${x.due_date && x.status === 'pending' ? App.dueBadge(x.due_date) : ''}
@@ -99,6 +113,8 @@
           <span>👀 열람 ${x.view_count}/${memberCount}명</span>
           <span>💬 ${x.comment_count}</span>
         </div>
+        ${(stepsOf[x.id] || []).length ? `<div class="step-chips">${stepsOf[x.id].map(r => `<span class="step-chip ${r.state}${r.approver_id === me.id ? ' me' : ''}"
+          title="${r.acted_at ? fmtDate(r.acted_at) : ''}">${ICON[r.state] || ''} ${esc(nameOf[r.approver_id] || '(퇴사자)')}${r.approver_id === me.id ? '(나)' : ''} ${WORD[r.state] || ''}</span>`).join('')}</div>` : ''}
       </a>`).join('');
   }
 
@@ -119,7 +135,8 @@
     sel.hidden = !cases.length;
   });
 
-  if (new URLSearchParams(location.search).get('tab') === 'myturn') document.querySelector('[data-tab=myturn]').click();
+  const initTab = new URLSearchParams(location.search).get('tab');
+  if (['myturn', 'history'].includes(initTab)) document.querySelector(`[data-tab=${initTab}]`).click();
   await load();
 
   // 다른 사람이 문서를 올리거나 컨펌이 진행되면 목록 갱신
