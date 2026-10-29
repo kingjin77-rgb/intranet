@@ -12,10 +12,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=3.3.1">
+<link rel="stylesheet" href="style.css?v=3.4.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=3.3.1"></script>
-<script src="app.js?v=3.3.1"></script>
+<script src="config.js?v=3.4.0"></script>
+<script src="app.js?v=3.4.0"></script>
 </head>
 <body>
 <main class="container" style="max-width:640px">
@@ -89,6 +89,7 @@
   const params = new URLSearchParams(location.search);
   const v2 = await App.hasV2();
   let mode = 'file', prev = null;
+  const prevApprovers = [];
 
   const members = (await App.loadMembers()).filter(m => m.id !== me.id);
   const byId = Object.fromEntries(members.map(m => [m.id, m]));
@@ -189,7 +190,13 @@
         document.getElementById('fTo').value = f.to || '';
       }
       const steps = await sb.from('approval_steps').select('approver_id,step_order').eq('doc_id', data.id).order('step_order');
-      (steps.data || []).forEach(s => { if (byId[s.approver_id]) approvers.push(s.approver_id); });
+      (steps.data || []).forEach(s => {
+        if (byId[s.approver_id]) approvers.push(s.approver_id);
+        prevApprovers.push(s.approver_id === me.id ? '본인' : (byId[s.approver_id] || {}).name || '퇴사자');
+      });
+      if ((steps.data || []).some(s => s.approver_id === me.id)) {
+        toast('이전 버전 컨펌자 중 본인은 빠집니다. 필요하면 다른 분을 추가하세요.');
+      }
       renderPicker();
       document.getElementById('cancelBtn').href = `doc.html?id=${encodeURIComponent(data.id)}`;
       document.getElementById('submitBtn').textContent = '수정본 올리기';
@@ -255,6 +262,8 @@
       p_description: mode === 'form' ? '' : document.getElementById('desc').value,
       p_approvers: approvers,
     };
+    if (prev && !approvers.length && prevApprovers.length &&
+        !confirm(`이전 버전은 ${prevApprovers.join(', ')}님이 컨펌했습니다.\n컨펌자 없이 수정본을 올릴까요?`)) return;
     const extra = v2 ? {
       p_case_id: document.getElementById('caseSelect').value || null,
       p_prev_doc_id: prev ? prev.id : null,

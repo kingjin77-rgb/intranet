@@ -287,3 +287,44 @@ do $do$ begin
   create trigger push_on_step_result after update of state on public.approval_steps
     for each row execute function public.push_on_step_result();
 end $do$;
+
+-- ---------------------------------------------------------------------
+-- 5. 이미 올린 문서에 컨펌자 추가 (컨펌자 없이 올렸거나, 한 명 더 받을 때)
+--    올린 사람·관리자만, 공유(none)·컨펌중(pending) 문서만. 추가된 사람에게 바로 차례가 간다.
+-- ---------------------------------------------------------------------
+create or replace function public.add_approvers(p_doc_id uuid, p_approvers uuid[])
+returns int language plpgsql security definer set search_path = public as $$
+declare
+  d     public.documents;
+  v_max int;
+  v_n   int;
+begin
+  select * into d from public.documents where id = p_doc_id for update;
+  if not found then raise exception '문서를 찾을 수 없습니다'; end if;
+  if not public.is_member() or (d.uploader_id <> auth.uid() and not public.is_admin()) then
+    raise exception '올린 사람이나 관리자만 컨펌자를 추가할 수 있습니다';
+  end if;
+  if d.status not in ('none', 'pending') then
+    raise exception '이미 컨펌이 끝났거나 반려된 문서입니다. 수정본으로 다시 요청하세요';
+  end if;
+  if coalesce(array_length(p_approvers, 1), 0) = 0 then raise exception '컨펌자를 골라 주세요'; end if;
+  if exists (select 1 from unnest(p_approvers) a where not exists
+              (select 1 from public.profiles p where p.id = a and p.active)) then
+    raise exception '존재하지 않거나 비활성화된 컨펌자가 있습니다';
+  end if;
+
+  select coalesce(max(step_order), 0) into v_max from public.approval_steps where doc_id = p_doc_id;
+  insert into public.approval_steps (doc_id, step_order, approver_id, state)
+  select p_doc_id, v_max + row_number() over (), a, 'current'
+  from (select distinct a from unnest(p_approvers) a) x
+  where not exists (select 1 from public.approval_steps s where s.doc_id = p_doc_id and s.approver_id = x.a);
+  get diagnostics v_n = row_count;
+
+  if v_n > 0 and d.status = 'none' then
+    update public.documents set status = 'pending' where id = p_doc_id;
+  end if;
+  return v_n;
+end;
+$$;
+revoke all on function public.add_approvers(uuid, uuid[]) from public, anon;
+grant execute on function public.add_approvers(uuid, uuid[]) to authenticated;
