@@ -23,6 +23,7 @@
   let mode = null, tool = 'pen', color = COLORS[0], stampKind = 'ok';
   let canMarkup = false, mineThisSession = [];
   let io = null;
+  let current = null;      // 비교(diff.js)용: { kind: 'pdf'|'docx', pdf, pages, box }
 
   // ---------------------------------------------------------------
   // 공통 툴바
@@ -163,7 +164,8 @@
   // ---------------------------------------------------------------
   function reset(path) {
     filePath = path || '';
-    pages = []; zoom = 1; zoomable = null;
+    pages = []; zoom = 1; zoomable = null; current = null;
+    if (window.DocDiff) DocDiff.reset();
     if (io) { io.disconnect(); io = null; }
     setMode(false);
     buildToolbar();
@@ -239,6 +241,8 @@
     card.querySelector('.pv-nav').hidden = doc.numPages < 2;
     attach(all.map(p => ({ el: p.el, num: p.num })));
     updatePg();
+    current = { kind: 'pdf', pdf: doc, pages: all };
+    if (window.DocDiff) DocDiff.ready();
     return { doc, pages: all };
   }
 
@@ -252,6 +256,8 @@
     box.addEventListener('scroll', updatePg, { passive: true });
     attach(secs.map((el, i) => ({ el, num: i + 1 })));
     updatePg();
+    current = { kind: 'docx', box, pages: secs };
+    if (window.DocDiff) DocDiff.ready();
   }
 
   function image(url, name, path) {
@@ -446,6 +452,7 @@
     });
     renderPeople();
     ctx.onChange && ctx.onChange(anns);
+    if (window.DocDiff) DocDiff.refresh();
   }
 
   // 메모·도장을 누르면 내용·작성자·고침 체크·삭제를 보여준다
@@ -519,10 +526,14 @@
   // ---------------------------------------------------------------
   // 데이터
   // ---------------------------------------------------------------
-  async function loadAnns() {
-    if (!ctx.hasV6) return;
+  async function fetchAnns() {
     const { data } = await sb.from('doc_annotations').select('*').eq('doc_id', ctx.doc.id).order('created_at');
     anns = data || [];
+    drawAll();
+  }
+  async function loadAnns() {
+    if (!ctx.hasV6) return;
+    await fetchAnns();
     if (ctx.prevDocId) {
       const r = await sb.from('doc_annotations').select('*').eq('doc_id', ctx.prevDocId).order('created_at');
       prevAnns = (r.data || []).filter(a => a.kind !== 'check');
@@ -568,8 +579,8 @@
   }
 
   window.Viewer = {
-    init, start, pdf, docxPages, image, plain, focus, toggleCheck, canCheck, remove,
-    get anns() { return anns; }, get filePath() { return filePath; },
-    STAMPS, KIND_LABEL, loadPdfJs, pagesInfo: () => pages,
+    init, start, reload: () => fetchAnns(), pdf, docxPages, image, plain, focus, toggleCheck, canCheck, remove,
+    get anns() { return anns; },
+    STAMPS, KIND_LABEL, loadPdfJs, pagesInfo: () => pages, get current() { return current; }, get filePath() { return filePath; }, scroller: () => scroller(), buildToolbar: () => buildToolbar(),
   };
 })();

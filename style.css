@@ -736,3 +736,28 @@ body.pv-locked { overflow: hidden; }
 .mk-body { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .mk-meta { font-size: 11px; color: var(--text-muted); }
 @media (prefers-reduced-motion: reduce) { .pv-pin, .pv-stamp, .pv-flash { animation: none !important; } }
+
+/* v6 수정본 비교 밑줄 */
+.df-layer { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.df-layer svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.df-bg { fill: #16a34a; fill-opacity: .12; }
+.df-ul { stroke: #16a34a; stroke-width: 2.5px; vector-effect: non-scaling-stroke; }
+.df-pin { position: absolute; transform: translate(-50%, -100%); pointer-events: auto; border: 0; background: #dc2626; color: #fff;
+  font-size: 10px; line-height: 1; padding: 2px 4px; border-radius: 4px; cursor: help; }
+span.df-add { text-decoration: underline 2.5px #16a34a; text-underline-offset: 3px; background: rgba(22,163,74,.12); }
+span.df-del:not(.df-pin) { color: #dc2626; font-size: .8em; cursor: help; vertical-align: super; }
+.df-pin.pv-flash, span.df-add.pv-flash, .df-ul.pv-flash, .df-bg.pv-flash { animation: pvFlash 1.2s ease 2; }
+.df-summary { margin-bottom: 8px; }
+.df-n.add, .df-tag.add { color: #15803d; }
+.df-n.rep, .df-tag.rep { color: #b45309; }
+.df-n.del, .df-tag.del { color: #dc2626; }
+.df-tag { font-size: 12px; }
+.df-ctx { font-size: 13px; color: var(--text-muted); overflow-wrap: anywhere; line-height: 1.6; }
+.df-ctx del, .df-ctx ins { margin: 0 2px; padding: 0 2px; border-radius: 3px; }
+.df-ctx del { background: #fee2e2; }
+.df-ctx ins { background: #dcfce7; }
+.df-old { font-size: 13px; color: #dc2626; text-decoration: line-through; overflow-wrap: anywhere; }
+.df-new { font-size: 13px; color: #15803d; text-decoration: underline 2px; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.df-item { display: flex; gap: 6px; align-items: flex-start; padding: 8px; border-radius: 10px; background: var(--bg); }
+.df-item.done { opacity: .65; }
+.pv-diff.on { background: #16a34a; border-color: #16a34a; color: #fff; }

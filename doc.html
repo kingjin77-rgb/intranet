@@ -14,11 +14,12 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=6.0.0">
+<link rel="stylesheet" href="style.css?v=6.0.1">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=6.0.0"></script>
-<script src="app.js?v=6.0.0"></script>
-<script src="viewer.js?v=6.0.0"></script>
+<script src="config.js?v=6.0.1"></script>
+<script src="app.js?v=6.0.1"></script>
+<script src="viewer.js?v=6.0.1"></script>
+<script src="diff.js?v=6.0.1"></script>
 </head>
 <body>
 <main class="container">
@@ -104,6 +105,12 @@
         </form>
       </div>
 
+      <div class="card" id="diffCard" hidden>
+        <h2>🔍 바뀐 곳</h2>
+        <p class="muted df-summary" id="diffSummary"></p>
+        <ul class="mk-list" id="diffList"></ul>
+      </div>
+
       <div class="card" id="markupCard" hidden>
         <h2>🖍 첨삭 <span class="count" id="markupCount"></span></h2>
         <div class="mk-filter" id="markupFilter"></div>
@@ -181,7 +188,7 @@
   const [hasV6, prevDoc] = await Promise.all([
     App.hasV6(),
     doc.group_id && doc.version > 1
-      ? sb.from('documents').select('id').eq('group_id', doc.group_id).eq('version', doc.version - 1).maybeSingle().then(r => r.data, () => null)
+      ? sb.from('documents').select('id,version,kind,file_path,file_name,file_type').eq('group_id', doc.group_id).eq('version', doc.version - 1).maybeSingle().then(r => r.data, () => null)
       : null,
   ]);
   Viewer.init({
@@ -193,6 +200,13 @@
       const b = document.querySelector(`#fileTabs .tab[data-i="${i}"]`);
       if (b && !b.classList.contains('active')) { b.click(); await new Promise(r => setTimeout(r, 900)); }
     },
+  });
+  // 수정본이면 이전 버전 대표 파일과 글자 비교 (diff.js)
+  DocDiff.init({
+    doc, me, nameOf, hasV6, primaryPath: doc.file_path,
+    primary: { name: doc.file_name, type: doc.file_type },
+    prev: prevDoc && prevDoc.kind !== 'form' && prevDoc.file_path
+      ? { path: prevDoc.file_path, name: prevDoc.file_name, type: prevDoc.file_type, version: prevDoc.version } : null,
   });
   if (doc.kind === 'form') { Viewer.plain(''); renderFormDoc(); } else await renderFile(allFiles[0]);
 
