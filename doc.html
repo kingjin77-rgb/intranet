@@ -14,10 +14,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=3.3.1">
+<link rel="stylesheet" href="style.css?v=3.4.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=3.3.1"></script>
-<script src="app.js?v=3.3.1"></script>
+<script src="config.js?v=3.4.0"></script>
+<script src="app.js?v=3.4.0"></script>
 </head>
 <body>
 <main class="container">
@@ -77,7 +77,18 @@
       </div>
       <div class="card" id="approvalCard" hidden>
         <h2>✍️ 컨펌 <span class="count" id="approvalProgress"></span></h2>
+        <p class="muted" id="noApprovers" hidden>컨펌자가 지정되지 않은 문서입니다.</p>
         <ul class="steps" id="steps"></ul>
+        <div id="addApproverBox" hidden>
+          <button class="btn ghost sm" type="button" id="addApproverBtn">＋ 컨펌 요청</button>
+          <div class="approver-pick" id="approverPick" hidden>
+            <div class="pick-list" id="pickList"></div>
+            <div class="btn-row">
+              <button class="btn sm" type="button" id="pickSend" style="flex:1">요청 보내기</button>
+              <button class="btn ghost sm" type="button" id="pickCancel">취소</button>
+            </div>
+          </div>
+        </div>
         <form id="actForm" hidden>
           <textarea id="actComment" placeholder="컨펌 의견 (반려 시 필수)" maxlength="1000"></textarea>
           <div class="btn-row">
@@ -279,7 +290,12 @@
     doc.status = (d.data && d.data.status) || doc.status;
     document.getElementById('status').innerHTML = statusBadge(doc.status);
     const card = document.getElementById('approvalCard');
-    card.hidden = !steps.length;
+    // 컨펌자 없이 올린 문서도 칸을 보여주고, 올린 사람·관리자가 나중에 요청할 수 있게 한다
+    const canAdd = (doc.uploader_id === me.id || me.role === 'admin') && ['none', 'pending'].includes(doc.status);
+    card.hidden = !steps.length && !canAdd;
+    document.getElementById('noApprovers').hidden = !!steps.length;
+    document.getElementById('addApproverBox').hidden = !canAdd;
+    document.getElementById('addApproverBtn').textContent = steps.length ? '＋ 컨펌자 추가' : '＋ 컨펌 요청';
     const label = { waiting: '대기', current: '컨펌 차례', approved: '컨펌', rejected: '반려', skipped: '—' };
     document.getElementById('steps').innerHTML = steps.map(st => `
       <li class="${st.state}">
@@ -293,6 +309,29 @@
     const mine = steps.find(st => st.state === 'current' && st.approver_id === me.id);
     document.getElementById('actForm').hidden = !mine;
   }
+
+  // ----- 컨펌 요청·추가 (올린 사람·관리자) -----
+  const pick = document.getElementById('approverPick');
+  document.getElementById('addApproverBtn').onclick = () => {
+    const taken = new Set(steps.map(st => st.approver_id));
+    const cands = members.filter(m => m.id !== doc.uploader_id && !taken.has(m.id));
+    document.getElementById('pickList').innerHTML = cands.length
+      ? cands.map(m => `<label><input type="checkbox" value="${m.id}"> ${esc(m.name)} <span class="muted">${esc(m.dept || '')}</span></label>`).join('')
+      : '<p class="muted">더 지정할 직원이 없습니다.</p>';
+    pick.hidden = false;
+  };
+  document.getElementById('pickCancel').onclick = () => (pick.hidden = true);
+  document.getElementById('pickSend').onclick = async (e) => {
+    const ids = [...document.querySelectorAll('#pickList input:checked')].map(i => i.value);
+    if (!ids.length) return toast('컨펌자를 골라 주세요.', true);
+    e.target.disabled = true;
+    const { error } = await sb.rpc('add_approvers', { p_doc_id: docId, p_approvers: ids });
+    e.target.disabled = false;
+    if (error) return toast(errMsg(error), true);
+    pick.hidden = true;
+    toast(`${ids.map(id => nameOf[id]).join(', ')}님께 컨펌을 요청했습니다.`);
+    loadSteps();
+  };
 
   document.getElementById('actForm').onclick = async (e) => {
     const b = e.target.closest('button[data-decision]');
@@ -613,6 +652,13 @@
     }
     const { data: vers } = await sb.from('documents').select('id,version,status,created_at,uploader_id').eq('group_id', doc.group_id).order('version');
     const list = vers || [];
+    // 버전마다 누가 컨펌·반려했는지 (v2에서도 v1 결과를 볼 수 있게)
+    const stepsOf = {};
+    if (list.length > 1) {
+      const { data: vs } = await sb.from('approval_steps').select('doc_id,approver_id,state,step_order').in('doc_id', list.map(v => v.id)).order('step_order');
+      (vs || []).forEach(s => (stepsOf[s.doc_id] = stepsOf[s.doc_id] || []).push(s));
+    }
+    const ICON = { approved: '✅', rejected: '↩️', current: '⏳', waiting: '⏳', skipped: '—' };
     const latest = list.length ? list[list.length - 1] : doc;
     if (list.length > 1) {
       document.getElementById('versionsCard').hidden = false;
@@ -621,6 +667,9 @@
           <span>${v.id === doc.id ? `<b>v${v.version} (지금 보는 버전)</b>` : `<a href="doc.html?id=${encodeURIComponent(v.id)}">v${v.version}</a>`}
             ${statusBadge(v.status)}</span>
           <span class="when">${esc(nameOf[v.uploader_id] || '')} · ${fmtDate(v.created_at)}</span>
+          <span class="ver-steps">${(stepsOf[v.id] || []).length
+            ? stepsOf[v.id].map(s => `${esc(nameOf[s.approver_id] || '?')} ${ICON[s.state] || ''}`).join(' · ')
+            : '컨펌자 없음'}</span>
         </li>`).join('');
     }
     if (latest.id !== doc.id) {
