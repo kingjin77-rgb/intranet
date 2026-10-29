@@ -131,6 +131,12 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--primary-lig
 .doc-item:hover { border-color: var(--primary-light); transform: translateY(-1px); box-shadow: var(--shadow); }
 .doc-item .row1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .doc-item .title { font-weight: 700; font-size: 15px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.step-chips { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+.step-chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #eef2f7; color: var(--text-muted); white-space: nowrap; }
+.step-chip.approved { background: #e6f4ea; color: #1e7b34; }
+.step-chip.rejected { background: #fdecea; color: #b42318; }
+.step-chip.current, .step-chip.waiting { background: var(--warn-bg); color: var(--warn); }
+.step-chip.me { font-weight: 700; }
 .doc-item .meta { margin-top: 6px; display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); }
 
 .empty { text-align: center; padding: 40px 16px; color: var(--text-muted); }
