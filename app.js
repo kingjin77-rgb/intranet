@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '3.4.0';
+  const APP_VERSION = '3.5.0';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -55,8 +55,10 @@
     if (m.includes('same as the old')) return '기존 비밀번호와 다르게 정해 주세요.';
     if (m.includes('Database error saving new user') || m.includes('초대되지 않은')) return '초대되지 않은 이메일입니다. 관리자에게 등록을 요청하세요.';
     if (m.includes('Token has expired') || m.includes('invalid')) return '인증 코드가 올바르지 않거나 만료되었습니다.';
-    if (/schema cache|does not exist/.test(m) && /comment_reactions|attachments|add_approvers/.test(m))
-      return 'DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/005_v33.sql 을 실행하면 바로 됩니다.';
+    if (/schema cache|does not exist/.test(m) && /comment_reactions|attachments|add_approvers|extra_files|create_document_v3/.test(m))
+      return /extra_files|create_document_v3/.test(m)
+        ? 'DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/006_files.sql 을 실행하면 바로 됩니다.'
+        : 'DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/005_v33.sql 을 실행하면 바로 됩니다.';
     if (m.includes('rate limit')) return '요청이 너무 많습니다. 잠시 후 다시 시도하세요.';
     if (/Failed to fetch|NetworkError|Load failed|NotReadable|could not be read/i.test(m) || (e && e.name === 'NotReadableError'))
       return '파일을 보내지 못했습니다. 인터넷 연결을 확인하고, 파일을 고른 뒤 워드·엑셀에서 다시 저장했다면 파일을 다시 선택해 주세요.';
