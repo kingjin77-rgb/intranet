@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '5.0.0';
+  const APP_VERSION = '5.1.0';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -63,6 +63,7 @@
         : /extra_files|create_document_v3/.test(m)
         ? 'DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/006_files.sql 을 실행하면 바로 됩니다.'
         : 'DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/005_v33.sql 을 실행하면 바로 됩니다.';
+    if (m.includes('반려된 문서입니다')) return '반려가 있는 문서에 컨펌자를 추가하려면 DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/009_reject.sql 을 실행하면 바로 됩니다.';
     if (m.includes('rate limit')) return '요청이 너무 많습니다. 잠시 후 다시 시도하세요.';
     if (/Failed to fetch|NetworkError|Load failed|NotReadable|could not be read/i.test(m) || (e && e.name === 'NotReadableError'))
       return '파일을 보내지 못했습니다. 인터넷 연결을 확인하고, 파일을 고른 뒤 워드·엑셀에서 다시 저장했다면 파일을 다시 선택해 주세요.';
