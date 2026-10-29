@@ -328,3 +328,24 @@ end;
 $$;
 revoke all on function public.add_approvers(uuid, uuid[]) from public, anon;
 grant execute on function public.add_approvers(uuid, uuid[]) to authenticated;
+
+-- ---------------------------------------------------------------------
+-- 6. 목록 뷰: 동시 컨펌이면 '컨펌 차례'가 여러 명이라, 한 명만 고르도록 다시 만든다
+--    (보는 사람이 그중 하나면 본인을, 아니면 아무나 한 명) — 기존 화면의 '내 차례' 표시 그대로 동작
+-- ---------------------------------------------------------------------
+create or replace view public.document_summary with (security_invoker = true) as
+select d.*,
+       p.name as uploader_name,
+       (select count(*) from public.document_views v where v.doc_id = d.id) as view_count,
+       (select count(*) from public.comments c where c.doc_id = d.id) as comment_count,
+       coalesce(
+         (select s.approver_id from public.approval_steps s
+           where s.doc_id = d.id and s.state = 'current' and s.approver_id = auth.uid() limit 1),
+         (select s.approver_id from public.approval_steps s
+           where s.doc_id = d.id and s.state = 'current' order by s.step_order limit 1)) as current_approver_id,
+       c.name as case_name,
+       not exists (select 1 from public.documents n where n.group_id = d.group_id and n.version > d.version) as is_latest
+from public.documents d
+join public.profiles p on p.id = d.uploader_id
+left join public.cases c on c.id = d.case_id;
+grant select on public.document_summary to authenticated;
