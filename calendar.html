@@ -12,10 +12,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=4.0.0">
+<link rel="stylesheet" href="style.css?v=5.0.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=4.0.0"></script>
-<script src="app.js?v=4.0.0"></script>
+<script src="config.js?v=5.0.0"></script>
+<script src="app.js?v=5.0.0"></script>
 </head>
 <body>
 <main class="container">
@@ -89,12 +89,24 @@
     </li>`;
   }
 
+  let monthLeaves = [], leaveNames = null;
   async function loadMonth() {
     const start = new Date(cur.getFullYear(), cur.getMonth(), 1);
     const end = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
     const { data, error } = await sb.from('events').select('*').gte('starts_at', start.toISOString()).lt('starts_at', end.toISOString()).order('starts_at');
     if (error) return toast(errMsg(error), true);
     monthEvents = data;
+    // 승인된 휴가·외근도 달력에 표시 (008 실행 후)
+    monthLeaves = [];
+    if (await App.hasV5()) try {
+      const s0 = ymd(start), e0 = ymd(new Date(end - 1));
+      const [lv, mem] = await Promise.all([
+        sb.from('leave_requests').select('user_id,kind,start_date,end_date').eq('status', 'approved').lte('start_date', e0).gte('end_date', s0),
+        leaveNames ? null : App.loadMembers(),
+      ]);
+      if (mem) leaveNames = Object.fromEntries(mem.map(m => [m.id, m.name]));
+      monthLeaves = (lv.data || []);
+    } catch (e) { console.warn('휴가 표시 실패', e); }
     renderCal();
   }
 
@@ -110,17 +122,21 @@
     for (let d = 1; d <= days; d++) {
       const k = `${cur.getFullYear()}-${pad(cur.getMonth() + 1)}-${pad(d)}`;
       const evs = byDay[k] || [];
+      const lvs = monthLeaves.filter(l => l.start_date <= k && l.end_date >= k);
       html += `<button class="cal-d${k === today ? ' today' : ''}${k === selected ? ' sel' : ''}" data-day="${k}">
         <span class="n">${d}</span>
         ${evs.slice(0, 3).map(e => `<span class="cal-ev ev-${e.kind}">${esc(e.title)}</span>`).join('')}
-        ${evs.length > 3 ? `<span class="cal-more">+${evs.length - 3}</span>` : ''}
+        ${lvs.slice(0, Math.max(0, 3 - evs.length)).map(l => `<span class="cal-ev ev-leave">🌴 ${esc((leaveNames || {})[l.user_id] || '')} ${esc(l.kind)}</span>`).join('')}
+        ${evs.length + lvs.length > 3 ? `<span class="cal-more">+${evs.length + lvs.length - 3}</span>` : ''}
       </button>`;
     }
     document.getElementById('cal').innerHTML = html;
     const sel = (byDay[selected] || []);
     const [y, m, dd] = selected.split('-');
     document.getElementById('dayList').innerHTML = `<b>${+m}월 ${+dd}일</b>
-      <ul class="people" style="margin-top:6px">${sel.length ? sel.map(e => evLine(e, false)).join('') : '<li class="muted">일정 없음</li>'}</ul>`;
+      <ul class="people" style="margin-top:6px">${sel.length ? sel.map(e => evLine(e, false)).join('') : ''}
+      ${monthLeaves.filter(l => l.start_date <= selected && l.end_date >= selected).map(l => `<li><span>🌴 <b>${esc((leaveNames || {})[l.user_id] || '')}</b> ${esc(l.kind)}</span><span class="when">${l.start_date.slice(5)} ~ ${l.end_date.slice(5)}</span></li>`).join('')
+        || (sel.length ? '' : '<li class="muted">일정 없음</li>')}</ul>`;
   }
 
   async function loadUpcoming() {

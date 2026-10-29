@@ -14,10 +14,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=4.0.0">
+<link rel="stylesheet" href="style.css?v=5.0.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=4.0.0"></script>
-<script src="app.js?v=4.0.0"></script>
+<script src="config.js?v=5.0.0"></script>
+<script src="app.js?v=5.0.0"></script>
 </head>
 <body>
 <main class="container">
@@ -77,6 +77,11 @@
       </div>
       <div class="card" id="approvalCard" hidden>
         <h2>✍️ 컨펌 <span class="count" id="approvalProgress"></span></h2>
+        <div class="due-row" id="dueRow" hidden>
+          <span id="dueText"></span>
+          <input type="date" id="dueInput" hidden title="컨펌 기한">
+          <button class="btn ghost sm" type="button" id="nudgeApprovers" hidden>🔔 컨펌 요청 다시 보내기</button>
+        </div>
         <p class="muted" id="noApprovers" hidden>컨펌자가 지정되지 않은 문서입니다.</p>
         <ul class="steps" id="steps"></ul>
         <div id="addApproverBox" hidden>
@@ -105,7 +110,7 @@
         <div id="unseenWrap" hidden>
           <p class="muted" style="margin:14px 0 6px">아직 안 본 사람</p>
           <ul class="people unseen" id="unseen"></ul>
-          <div class="btn-row"><button class="btn ghost sm" id="nudgeBtn">미열람자 독촉 메시지 복사</button></div>
+          <div class="btn-row"><button class="btn sm" id="nudgeUnseen" hidden>🔔 안 본 사람에게 알림 보내기</button><button class="btn ghost sm" id="nudgeBtn">독촉 문구 복사(카톡용)</button></div>
         </div>
       </div>
     </div>
@@ -191,6 +196,7 @@
     const viewUrl = view.data && view.data.signedUrl;
     openBtn.href = viewUrl || '#';
     document.getElementById('downloadBtn').href = (dl.data && dl.data.signedUrl) || '#';
+    document.getElementById('downloadBtn').onclick = () => App.logActivity('download', 'documents', doc.id, f.name);
 
     const lower = f.name.toLowerCase();
     const noPreview = (msg) => {
@@ -328,7 +334,45 @@
     document.getElementById('approvalProgress').textContent = steps.length > 1 ? `${steps.length}명 중 ${done}명 컨펌` : '';
     const mine = steps.find(st => st.state === 'current' && st.approver_id === me.id);
     document.getElementById('actForm').hidden = !mine;
+    renderDue();
   }
+
+  // ----- 컨펌 기한 · 다시 알림 (v5) -----
+  const owner = doc.uploader_id === me.id || me.role === 'admin';
+  function dday(due) {
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    const n = Math.round((new Date(due + 'T00:00:00') - t) / 86400000);
+    return n < 0 ? `<b class="due-late">기한 ${-n}일 지남</b>` : n === 0 ? '<b class="due-soon">오늘까지</b>' : `D-${n}`;
+  }
+  function renderDue() {
+    const v5 = 'due_date' in doc;
+    const row = document.getElementById('dueRow');
+    row.hidden = !v5 || (!doc.due_date && !(owner && doc.status === 'pending'));
+    if (row.hidden) return;
+    document.getElementById('dueText').innerHTML = doc.due_date
+      ? `⏰ 컨펌 기한 ${doc.due_date.slice(5).replace('-', '/')} (${dday(doc.due_date)})` : '⏰ 기한 없음';
+    const inp = document.getElementById('dueInput');
+    inp.hidden = !(owner && ['pending', 'none'].includes(doc.status));
+    inp.value = doc.due_date || '';
+    document.getElementById('nudgeApprovers').hidden = !(owner && doc.status === 'pending' && steps.some(st => st.state === 'current'));
+  }
+  document.getElementById('dueInput').onchange = async (e) => {
+    const { error } = await sb.rpc('set_doc_due', { p_doc: docId, p_due: e.target.value || null });
+    if (error) return toast(errMsg(error), true);
+    doc.due_date = e.target.value || null;
+    renderDue();
+    toast(doc.due_date ? '기한을 정했습니다. 전날·당일 아침에 컨펌자에게 자동으로 알림이 갑니다.' : '기한을 지웠습니다.');
+  };
+  async function nudge(kind, btn) {
+    btn.disabled = true;
+    const { data, error } = await sb.rpc('nudge_doc', { p_doc: docId, p_kind: kind });
+    btn.disabled = false;
+    if (error) return toast(errMsg(error), true);
+    toast(data ? `${data}명에게 알림을 보냈습니다.` : '보낼 사람이 없습니다.');
+  }
+  document.getElementById('nudgeApprovers').onclick = (e) => nudge('approvers', e.target);
+  document.getElementById('nudgeUnseen').onclick = (e) => nudge('unseen', e.target);
+  document.getElementById('nudgeUnseen').hidden = !(owner && 'due_date' in doc);
 
   // ----- 컨펌 요청·추가 (올린 사람·관리자) -----
   const pick = document.getElementById('approverPick');
@@ -410,7 +454,7 @@
   // HEAD 요청은 테이블이 없어도 오류가 안 잡히는 경우가 있어 GET 으로 확인한다
   const hasV33 = sb.from('comment_reactions').select('comment_id').limit(1)
     .then(r => !r.error && Array.isArray(r.data), () => false);
-  let reactT, pending = [], groupDocs = null;
+  let reactT, pending = [], groupDocs = null, showResolved = false;
 
   const AVATAR_COLORS = ['#1a4f8a', '#e8821a', '#15803d', '#7c3aed', '#be185d', '#0e7490', '#b45309', '#4d7c0f'];
   function avatar(uid) {
@@ -478,7 +522,12 @@
     const timeline = [...list.map(c => ({ c, at: c.created_at }))];
     if (groupDocs.length > 1) groupDocs.forEach(d => timeline.push({ v: d, at: d.created_at }));
     timeline.sort((x, y) => new Date(x.at) - new Date(y.at));
-    box.innerHTML = list.length ? timeline.map(({ c, v }) => {
+    const canResolve = (c) => 'resolved_at' in c && (c.user_id === me.id || doc.uploader_id === me.id || me.role === 'admin');
+    const resolvedN = list.filter(c => c.resolved_at).length;
+    document.getElementById('commentCount').textContent += resolvedN ? ` · ✔ 해결 ${resolvedN}` : '';
+    box.classList.toggle('show-resolved', showResolved);
+    box.innerHTML = (resolvedN ? `<button type="button" class="btn ghost sm xc-toggle" data-act="toggleResolved">${showResolved ? '해결된 의견 숨기기' : `✔ 해결된 의견 ${resolvedN}개 보기`}</button>` : '') +
+      (list.length ? timeline.map(({ c, v }) => {
       if (v) return `<div class="xc-ver${v.id === doc.id ? ' cur' : ''}"><span>📄 v${v.version || 1}${(v.version || 1) > 1 ? ' 수정본' : ''} 올림 · ${esc(nameOf[v.uploader_id] || '')} · ${esc(fmtDate(v.created_at))}${v.id === doc.id ? ' · 지금 보는 버전' : ''}</span></div>`;
       const mineR = new Set(reacts.filter(r => r.comment_id === c.id && r.user_id === me.id).map(r => r.emoji));
       const byEmoji = {};
@@ -487,26 +536,28 @@
         <button type="button" class="xc-react${mineR.has(e) ? ' on' : ''}${e === '❤️' ? ' heart' : ''}" data-act="react" data-emoji="${e}"
           title="${esc((byEmoji[e] || []).join(', '))}">${e === '❤️' && !mineR.has(e) ? '♡' : e}${byEmoji[e] ? `<span>${byEmoji[e].length}</span>` : ''}</button>`).join('');
       return `
-      <article class="xc" data-id="${c.id}">
+      <article class="xc${c.resolved_at ? ' resolved' : ''}" data-id="${c.id}">
         ${avatar(c.user_id)}
         <div class="xc-main">
           <div class="xc-head"><b>${esc(nameOf[c.user_id] || '(비활성)')}</b>
             <span class="xc-time" title="${esc(fmtDate(c.created_at))}">· ${ago(c.created_at)}</span>
             ${groupDocs.length > 1 ? `<a class="xc-vtag${c.doc_id === doc.id ? ' cur' : ''}" href="doc.html?id=${encodeURIComponent(c.doc_id)}" title="이 코멘트가 달린 버전">v${verOf[c.doc_id] || 1}</a>` : ''}
             ${c.page_no ? `<span class="xc-pg">p.${c.page_no}</span>` : ''}
+            ${c.resolved_at ? `<span class="xc-done" title="${esc(nameOf[c.resolved_by] || '')} · ${esc(fmtDate(c.resolved_at))}">✔ 해결됨</span>` : ''}
             ${c.user_id === me.id || me.role === 'admin' ? `<button type="button" class="xc-del" data-act="del">삭제</button>` : ''}
           </div>
           ${c.body ? `<div class="xc-body">${fmtBody(c.body)}</div>` : ''}
           ${renderFiles(c)}
           <div class="xc-actions">
             <button type="button" class="xc-act" data-act="reply" data-name="${esc(nameOf[c.user_id] || '')}">💬 답글</button>
+            ${canResolve(c) ? `<button type="button" class="xc-act" data-act="resolve">${c.resolved_at ? '↺ 다시 열기' : '✔ 해결'}</button>` : ''}
             ${v33 ? `${pills}
             <span class="xc-pickwrap"><button type="button" class="xc-act" data-act="pick" title="반응 추가">＋😊</button>
               <span class="xc-picker" hidden>${REACTIONS.map(e => `<button type="button" data-act="react" data-emoji="${e}">${e}</button>`).join('')}</span></span>` : ''}
           </div>
         </div>
       </article>`;
-    }).join('') : '<p class="muted">첫 의견을 남겨주세요.</p>';
+    }).join('') : '<p class="muted">첫 의견을 남겨주세요.</p>');
     // 사진 썸네일은 서명된 주소로 채운다
     box.querySelectorAll('img[data-src]').forEach(img => {
       signed(img.dataset.src).then(u => (img.src = u)).catch(() => (img.alt = '⚠️ ' + img.alt));
@@ -530,7 +581,14 @@
     const cid = art && art.dataset.id;
     const act = b.dataset.act;
     try {
-      if (act === 'reply') {
+      if (act === 'toggleResolved') {
+        showResolved = !showResolved;
+        loadComments();
+      } else if (act === 'resolve') {
+        const { error } = await sb.rpc('toggle_comment_resolved', { p_comment: cid });
+        if (error) return toast(errMsg(error), true);
+        loadComments();
+      } else if (act === 'reply') {
         const ta = document.getElementById('commentBody');
         ta.value = `@${b.dataset.name} ` + ta.value.replace(/^@\S+\s/, '');
         ta.focus();
@@ -550,6 +608,7 @@
       } else if (act === 'img') {
         lightbox(await signed(b.dataset.path), b.dataset.name);
       } else if (act === 'file') {
+        App.logActivity('download', 'comments', cid, b.dataset.name);
         location.href = await signed(b.dataset.path, b.dataset.name);
       } else if (act === 'del') {
         if (!confirm('코멘트를 삭제할까요? 첨부파일도 함께 지워집니다.')) return;
@@ -569,6 +628,7 @@
   document.getElementById('myAvatar').outerHTML = avatar(me.id);
   const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 240) + 'px'; };
   ta.addEventListener('input', grow);
+  App.attachMention(ta, () => members.map(m => m.name));
   ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) form.requestSubmit(); });
 
   hasV33.then(ok => {

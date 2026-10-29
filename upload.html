@@ -12,10 +12,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=4.0.0">
+<link rel="stylesheet" href="style.css?v=5.0.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=4.0.0"></script>
-<script src="app.js?v=4.0.0"></script>
+<script src="config.js?v=5.0.0"></script>
+<script src="app.js?v=5.0.0"></script>
 </head>
 <body>
 <main class="container" style="max-width:640px">
@@ -77,6 +77,10 @@
       <button class="btn ghost" type="button" id="addApprover">추가</button>
     </div>
     <ul class="picker" id="picker"></ul>
+    <div id="dueWrap" hidden>
+      <label for="dueDate">컨펌 기한 (선택 · 전날·당일 아침에 컨펌자에게 자동 알림)</label>
+      <input type="date" id="dueDate">
+    </div>
 
     <div class="btn-row">
       <button class="btn" type="submit" id="submitBtn" style="flex:1">올리기</button>
@@ -290,6 +294,13 @@
     return f;
   }
 
+  App.hasV5().then(ok => { document.getElementById('dueWrap').hidden = !ok; });
+  async function finish(docId) {
+    const due = document.getElementById('dueDate').value;
+    if (due && approvers.length) await sb.rpc('set_doc_due', { p_doc: docId, p_due: due });
+    location.replace(`doc.html?id=${encodeURIComponent(docId)}&new=1`);
+  }
+
   document.getElementById('form').onsubmit = async (e) => {
     e.preventDefault();
     const btn = document.getElementById('submitBtn');
@@ -316,7 +327,7 @@
       });
       btn.disabled = false;
       if (error) return toast(errMsg(error), true);
-      return location.replace(`doc.html?id=${encodeURIComponent(docId)}&new=1`);
+      return finish(docId);
     }
 
     if (!files.length) return toast('파일을 골라 주세요.', true);
@@ -357,7 +368,7 @@
       progress.textContent = '';
       return toast(errMsg(error), true);
     }
-    location.replace(`doc.html?id=${encodeURIComponent(docId)}&new=1`);
+    finish(docId);
   };
 })().catch(e => console.warn(e.message));
 </script>

@@ -12,10 +12,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=4.0.0">
+<link rel="stylesheet" href="style.css?v=5.0.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=4.0.0"></script>
-<script src="app.js?v=4.0.0"></script>
+<script src="config.js?v=5.0.0"></script>
+<script src="app.js?v=5.0.0"></script>
 </head>
 <body>
 <main class="container" style="max-width:1100px">
@@ -25,6 +25,7 @@
       <p class="muted" id="today"></p>
     </div>
     <div class="quick">
+      <button class="btn sm clock-quick" id="clockQuick" hidden></button>
       <a class="btn sm" href="upload.html">＋ 문서</a>
       <a class="btn ghost sm" href="tasks.html?new=1">＋ 업무 지시</a>
       <a class="btn ghost sm" href="calendar.html?new=1">＋ 일정</a>
@@ -77,7 +78,7 @@
     const docs = (data || []).filter(d => d.is_latest !== false);
     const turn = docs.filter(d => d.current_approver_id === me.id);
     set('turn', turn.length ? turn.slice(0, 6).map(d => `<li><a href="doc.html?id=${encodeURIComponent(d.id)}">${d.kind === 'form' ? '📝' : fileIcon(d.file_type, d.file_name)} ${esc(d.title)}</a>
-      <span class="when">${esc(d.uploader_name || '')} · ${fmtDate(d.created_at)}</span></li>`).join('') : empty('컨펌할 문서가 없습니다 👍'), turn.length);
+      <span class="when">${d.due_date ? App.dueBadge(d.due_date) + ' ' : ''}${esc(d.uploader_name || '')} · ${fmtDate(d.created_at)}</span></li>`).join('') : empty('컨펌할 문서가 없습니다 👍'), turn.length);
     set('recent', docs.length ? docs.slice(0, 6).map(d => `<li><a href="doc.html?id=${encodeURIComponent(d.id)}">${esc(d.title)}</a>
       <span class="when">${statusBadge(d.status)}</span></li>`).join('') : empty('아직 문서가 없습니다'));
   });
@@ -142,6 +143,27 @@
         <span class="when bad-text">미수 ${App.fmtWon(r.unpaid_amount)}</span></li>`).join('');
     });
   }
+
+  // v5: 출퇴근 버튼 (오늘 기록에 따라 출근 → 퇴근 → 완료)
+  App.hasV5().then(async ok => {
+    if (!ok) return;
+    const btn = document.getElementById('clockQuick');
+    const hm = (iso) => new Date(iso).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+    const draw = async () => {
+      const { data } = await sb.from('attendance').select('*').eq('user_id', me.id).eq('work_date', App.ymdLocal(new Date())).maybeSingle();
+      btn.hidden = false;
+      if (!data || !data.check_in) { btn.textContent = '🕘 출근'; btn.dataset.act = 'in'; btn.className = 'btn sm clock-quick'; }
+      else if (!data.check_out) { btn.textContent = `🏠 퇴근 (${hm(data.check_in)} 출근)`; btn.dataset.act = 'out'; btn.className = 'btn ghost sm clock-quick'; }
+      else { btn.textContent = `✔ ${hm(data.check_in)}~${hm(data.check_out)}`; btn.dataset.act = 'out'; btn.className = 'btn ghost sm clock-quick'; }
+    };
+    btn.onclick = async () => {
+      const { error } = await sb.rpc('clock', { p_action: btn.dataset.act });
+      if (error) return App.toast(App.errMsg(error), true);
+      App.toast(btn.dataset.act === 'in' ? '출근했습니다.' : '퇴근했습니다. 수고하셨습니다!');
+      draw();
+    };
+    draw();
+  });
 })().catch(e => console.warn(e.message));
 </script>
 </body>

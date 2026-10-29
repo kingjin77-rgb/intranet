@@ -12,10 +12,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=4.0.0">
+<link rel="stylesheet" href="style.css?v=5.0.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=4.0.0"></script>
-<script src="app.js?v=4.0.0"></script>
+<script src="config.js?v=5.0.0"></script>
+<script src="app.js?v=5.0.0"></script>
 </head>
 <body>
 <main class="container">
@@ -60,6 +60,12 @@
       <div class="card" id="taskCard" hidden>
         <h2>📌 이 사건의 할 일 <span class="count" id="taskCount"></span></h2>
         <ul class="home-list" id="caseTasks"></ul>
+      </div>
+      <div class="card">
+        <h2>🕒 사건 타임라인 <span class="count" id="tlCount"></span></h2>
+        <p class="muted" style="margin:-4px 0 8px">이 사건의 문서·컨펌·코멘트·일정·업무·입금·상담을 시간순으로 모았습니다.</p>
+        <ul class="timeline" id="timeline"><li class="muted">불러오는 중…</li></ul>
+        <button class="btn ghost sm" id="tlMore" hidden>더 보기</button>
       </div>
     </div>
     <div>
@@ -260,6 +266,50 @@
     }
     await Promise.all([loadFinance(), loadTasks()]);
   }
+
+  // ----- 사건 타임라인 -----
+  async function loadTimeline() {
+    const v3 = await App.hasV3();
+    const docsR = await sb.from('documents').select('id,title,version,kind,uploader_id,created_at,status,file_type,file_name').eq('case_id', id);
+    const docs = docsR.data || [];
+    const docIds = docs.map(d => d.id);
+    const title = Object.fromEntries(docs.map(d => [d.id, d.title]));
+    const [steps, cms, evs, tks, pays, cons, names] = await Promise.all([
+      docIds.length ? sb.from('approval_steps').select('doc_id,approver_id,state,acted_at,comment').in('doc_id', docIds).not('acted_at', 'is', null) : { data: [] },
+      docIds.length ? sb.from('comments').select('doc_id,user_id,body,created_at').in('doc_id', docIds) : { data: [] },
+      sb.from('events').select('id,title,starts_at,kind,location').eq('case_id', id),
+      v3 ? sb.from('tasks').select('title,assignee_id,created_by,created_at,status,done_at').eq('case_id', id) : { data: [] },
+      v3 ? sb.from('payments').select('amount,paid_on,method,created_at').eq('case_id', id) : { data: [] },
+      v3 ? sb.from('consultations').select('client_name,summary,created_at').eq('case_id', id) : { data: [] },
+      sb.from('profiles').select('id,name'),
+    ]);
+    const who = Object.fromEntries((names.data || []).map(p => [p.id, p.name]));
+    const items = [];
+    const link = (d) => `doc.html?id=${encodeURIComponent(d)}`;
+    docs.forEach(d => items.push({ at: d.created_at, icon: d.kind === 'form' ? '📝' : '📄', html: `<a href="${link(d.id)}">${esc(d.title)}</a>${d.version > 1 ? ` <span class="badge none">v${d.version}</span>` : ''} 올림 · ${esc(who[d.uploader_id] || '')}` }));
+    (steps.data || []).filter(s2 => ['approved', 'rejected'].includes(s2.state)).forEach(s2 => items.push({ at: s2.acted_at, icon: s2.state === 'approved' ? '✅' : '↩️',
+      html: `${esc(who[s2.approver_id] || '')} ${s2.state === 'approved' ? '컨펌' : '반려'} · <a href="${link(s2.doc_id)}">${esc(title[s2.doc_id] || '')}</a>${s2.comment ? ` <span class="muted">"${esc(s2.comment.slice(0, 60))}"</span>` : ''}` }));
+    (cms.data || []).forEach(x => items.push({ at: x.created_at, icon: '💬', html: `${esc(who[x.user_id] || '')}: ${esc((x.body || '📎 첨부').slice(0, 80))} · <a href="${link(x.doc_id)}">${esc(title[x.doc_id] || '')}</a>` }));
+    (evs.data || []).forEach(x => items.push({ at: x.starts_at, icon: '📅', html: `${esc(App.EVENT_KIND[x.kind] || '일정')}: ${esc(x.title)}${x.location ? ' · ' + esc(x.location) : ''}`, future: new Date(x.starts_at) > new Date() }));
+    (tks.data || []).forEach(x => {
+      items.push({ at: x.created_at, icon: '📌', html: `업무 지시: ${esc(x.title)} → ${esc(who[x.assignee_id] || '')}` });
+      if (x.done_at) items.push({ at: x.done_at, icon: '☑️', html: `업무 완료: ${esc(x.title)} · ${esc(who[x.assignee_id] || '')}` });
+    });
+    (pays.data || []).forEach(x => items.push({ at: x.paid_on + 'T12:00:00', icon: '💰', html: `입금 ${App.fmtWon(x.amount)}${x.method ? ' · ' + esc(x.method) : ''}` }));
+    (cons.data || []).forEach(x => items.push({ at: x.created_at, icon: '📞', html: `상담: ${esc(x.client_name)} · ${esc((x.summary || '').slice(0, 60))}` }));
+    items.sort((a, b) => new Date(b.at) - new Date(a.at));
+    let shown = 30;
+    const draw = () => {
+      document.getElementById('tlCount').textContent = items.length ? `${items.length}건` : '';
+      document.getElementById('timeline').innerHTML = items.length ? items.slice(0, shown).map(x => `<li class="${x.future ? 'future' : ''}">
+        <span class="tl-dot">${x.icon}</span><div><div>${x.html}</div><div class="when">${esc(fmtDate(x.at))}${x.future ? ' · 예정' : ''}</div></div></li>`).join('')
+        : '<li class="muted">아직 기록이 없습니다.</li>';
+      document.getElementById('tlMore').hidden = items.length <= shown;
+    };
+    document.getElementById('tlMore').onclick = () => { shown += 30; draw(); };
+    draw();
+  }
+  loadTimeline().catch(e => console.warn('타임라인', e));
 })().catch(e => console.warn(e.message));
 </script>
 </body>
