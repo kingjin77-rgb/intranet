@@ -14,10 +14,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=5.0.0">
+<link rel="stylesheet" href="style.css?v=5.1.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=5.0.0"></script>
-<script src="app.js?v=5.0.0"></script>
+<script src="config.js?v=5.1.0"></script>
+<script src="app.js?v=5.1.0"></script>
 </head>
 <body>
 <main class="container">
@@ -317,7 +317,7 @@
     document.getElementById('status').innerHTML = statusBadge(doc.status);
     const card = document.getElementById('approvalCard');
     // 컨펌자 없이 올린 문서도 칸을 보여주고, 올린 사람·관리자가 나중에 요청할 수 있게 한다
-    const canAdd = (doc.uploader_id === me.id || me.role === 'admin') && ['none', 'pending'].includes(doc.status);
+    const canAdd = (doc.uploader_id === me.id || me.role === 'admin') && ['none', 'pending', 'rejected'].includes(doc.status);
     card.hidden = !steps.length && !canAdd;
     document.getElementById('noApprovers').hidden = !!steps.length;
     document.getElementById('addApproverBox').hidden = !canAdd;
@@ -330,8 +330,11 @@
         <div class="note">${label[st.state]}${st.acted_at ? ' · ' + fmtDate(st.acted_at) : ''}</div>
         ${st.comment ? `<div class="say">${esc(st.comment)}</div>` : ''}
       </li>`).join('');
+    // 반려는 그 사람만 표시하고, 다른 컨펌자는 그대로 진행된다 (v5.1)
     const done = steps.filter(st => st.state === 'approved').length;
-    document.getElementById('approvalProgress').textContent = steps.length > 1 ? `${steps.length}명 중 ${done}명 컨펌` : '';
+    const back = steps.filter(st => st.state === 'rejected').length;
+    document.getElementById('approvalProgress').textContent = steps.length > 1
+      ? `${steps.length}명 중 ${done}명 컨펌${back ? ` · ${back}명 반려` : ''}` : '';
     const mine = steps.find(st => st.state === 'current' && st.approver_id === me.id);
     document.getElementById('actForm').hidden = !mine;
     renderDue();
@@ -766,7 +769,7 @@
         btn.className = 'btn';
         const n = document.getElementById('rejectedNotice');
         n.hidden = false;
-        n.innerHTML = '반려된 문서입니다. 의견을 반영해 <b>📝 수정본 올리기</b>로 다시 컨펌을 요청하세요. 이전 버전과 코멘트는 그대로 남습니다.';
+        n.innerHTML = '컨펌자 전원이 반려한 문서입니다. 의견을 반영해 <b>📝 수정본 올리기</b>로 다시 요청하거나, 위 <b>＋ 컨펌자 추가</b>로 다른 분께 컨펌을 받으세요.';
       }
     }
   }
