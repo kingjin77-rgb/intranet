@@ -1041,3 +1041,4 @@ table { font-size: calc(14px * var(--fs)); }
 .pv-replyform { display: flex; gap: 6px; margin-top: 4px; }
 .pv-replyform input { flex: 1; min-width: 0; padding: 7px 10px; font-size: calc(14px * var(--fs)); }
 .pv-pin i, .pv-fix i { white-space: nowrap; }
+.av-grid.av-off { opacity: .45; }
