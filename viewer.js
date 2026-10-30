@@ -11,7 +11,7 @@
   const COLORS = ['#e11d48', '#2563eb', '#16a34a', '#f59e0b', '#111827'];
   const HL_COLOR = '#facc15';
   const STAMPS = { ok: '확인', fix: '수정요망', approved: '컨펌', rejected: '반려' };
-  const KIND_LABEL = { pen: '✏️ 펜', highlight: '🖍 형광펜', underline: '＿ 밑줄', note: '📝 메모', stamp: '🔖 도장' };
+  const KIND_LABEL = { fix: '✍️ 고쳐쓰기', pen: '✏️ 펜', highlight: '🖍 형광펜', underline: '＿ 밑줄', note: '📝 메모', stamp: '🔖 도장' };
 
   let ctx = null;          // init 에서 받는 문서·사용자 정보
   let host = null;         // #viewerBody
@@ -22,6 +22,7 @@
   let anns = [], prevAnns = [], showPrev = false, hidden = new Set();
   let mode = null, tool = 'pen', color = COLORS[0], stampKind = 'ok';
   let canMarkup = false, mineThisSession = [];
+  let replies = {}, hasReplies = false;   // 첨삭 답글 (011): ann_id → [{id,user_id,body,created_at}]
   let io = null;
   let current = null;      // 비교(diff.js)용: { kind: 'pdf'|'docx', pdf, pages, box }
 
@@ -52,6 +53,7 @@
         <button type="button" class="pv-btn pv-x" data-act="exitfull" hidden title="닫기">✕</button>
       </div>
       <div class="pv-tools" hidden>
+        <button type="button" class="pv-tool pv-tool-fix" data-tool="fix" title="고쳐쓰기: 고칠 글자 위를 끌면 취소선이 그어지고, 고칠 문구를 입력합니다">✍️ 고쳐쓰기</button>
         <button type="button" class="pv-tool" data-tool="pen" title="펜 (자유롭게 그리기)">✏️ 펜</button>
         <button type="button" class="pv-tool" data-tool="highlight" title="형광펜 (끌어서 칠하기)">🖍 형광펜</button>
         <button type="button" class="pv-tool" data-tool="underline" title="밑줄 (끌어서 긋기) — 첨삭 목록에 고침 체크가 생겨요">＿ 밑줄</button>
@@ -318,9 +320,9 @@
       if (tool === 'stamp') return save({ page: num, kind: 'stamp', data: { x, y }, body: stampKind, color: stampKind === 'rejected' || stampKind === 'fix' ? '#e11d48' : '#2563eb' });
       layer.setPointerCapture(e.pointerId);
       cur = { x0: x, y0: y, pts: [[x, y]] };
-      el = document.createElementNS('http://www.w3.org/2000/svg', tool === 'highlight' ? 'rect' : tool === 'underline' ? 'line' : 'polyline');
+      el = document.createElementNS('http://www.w3.org/2000/svg', tool === 'highlight' || tool === 'fix' ? 'rect' : tool === 'underline' ? 'line' : 'polyline');
       el.setAttribute('class', 'pv-live ' + tool);
-      el.style.setProperty('--c', tool === 'highlight' ? HL_COLOR : color);
+      el.style.setProperty('--c', tool === 'highlight' ? HL_COLOR : tool === 'fix' ? '#e11d48' : color);
       svg.appendChild(el);
       move(e);
     });
@@ -339,7 +341,7 @@
         const l = cur.pts[cur.pts.length - 1];
         if (Math.hypot(x - l[0], y - l[1]) > 0.002) cur.pts.push([x, y]);
         el.setAttribute('points', cur.pts.map(p => p.join(',')).join(' '));
-      } else if (tool === 'highlight') {
+      } else if (tool === 'highlight' || tool === 'fix') {
         cur.r = { x: Math.min(cur.x0, x), y: Math.min(cur.y0, y), w: Math.abs(x - cur.x0), h: Math.abs(y - cur.y0) };
         setRect(el, cur.r);
       } else {
@@ -357,6 +359,18 @@
       if (tool === 'pen' && c.pts.length > 1) save({ page: num, kind: 'pen', data: { pts: c.pts }, color });
       else if (tool === 'highlight' && c.r && c.r.w > 0.01 && c.r.h > 0.004) save({ page: num, kind: 'highlight', data: c.r, color: HL_COLOR });
       else if (tool === 'underline' && c.r && c.r.w > 0.01) save({ page: num, kind: 'underline', data: c.r, color });
+      else if (tool === 'fix') {
+        if (!c.r || c.r.w < 0.01) return toast('고칠 글자 위를 옆으로 끌어 주세요.');
+        // 한 줄만 끌어도 글자 높이만큼은 잡히게
+        const r = { ...c.r, h: Math.max(c.r.h, 0.012) };
+        const orig = textIn(layer.parentElement, r);
+        openSheet({
+          title: '✍️ 고쳐쓰기', sub: orig ? `원래: “${orig}”` : '취소선 친 부분을 무엇으로 고칠까요?',
+          placeholder: '고칠 문구 (지우기만 하려면 "삭제"라고 쓰세요)',
+          live: { layer, r },
+          onSubmit: (body) => save({ page: num, kind: 'fix', data: { ...r, orig }, body, color: '#e11d48' }),
+        });
+      }
     };
     layer.addEventListener('pointerup', up);
     layer.addEventListener('pointercancel', up);
@@ -365,25 +379,63 @@
   const setLine = (el, r) => { el.setAttribute('x1', r.x); el.setAttribute('x2', r.x + r.w); el.setAttribute('y1', r.y); el.setAttribute('y2', r.y); };
 
   function addNote(layer, num, x, y) {
+    openSheet({
+      title: '📝 메모', placeholder: '메모를 입력하세요', mark: { layer, x, y },
+      onSubmit: (body) => save({ page: num, kind: 'note', data: { x, y }, body, color }),
+    });
+  }
+
+  // 글 입력은 화면 아래 고정 시트로 (휴대폰 키보드 위에 뜨고, 스크롤 상자에 잘리지 않음)
+  function openSheet({ title, sub, placeholder, onSubmit, live, mark }) {
     closePop();
-    const pop = document.createElement('form');
-    pop.className = 'pv-pop pv-noteform';
-    pop.style.left = (x * 100) + '%'; pop.style.top = (y * 100) + '%';
-    pop.innerHTML = `<textarea maxlength="1000" placeholder="메모를 입력하세요" required></textarea>
-      <div class="pv-popbtns"><button class="btn sm" type="submit">붙이기</button><button class="btn ghost sm" type="button" data-x>취소</button></div>`;
-    layer.querySelector('.pv-pins').appendChild(pop);
-    const ta = pop.querySelector('textarea');
-    ta.focus();
-    pop.querySelector('[data-x]').onclick = () => pop.remove();
-    ta.onkeydown = (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) pop.requestSubmit(); };
-    pop.onsubmit = (e) => {
+    document.querySelectorAll('.pv-sheet').forEach(x => x.remove());
+    const sheet = document.createElement('form');
+    sheet.className = 'pv-sheet';
+    sheet.innerHTML = `<div class="pv-sheet-head"><b>${esc(title)}</b><button type="button" class="pv-sheet-x" data-x aria-label="닫기">✕</button></div>
+      ${sub ? `<div class="pv-sheet-sub">${esc(sub)}</div>` : ''}
+      <div class="pv-sheet-row"><textarea maxlength="1000" rows="2" placeholder="${esc(placeholder || '')}" enterkeyhint="send"></textarea>
+      <button class="btn" type="submit">저장</button></div>`;
+    document.body.appendChild(sheet);
+    // 입력 중인 자리를 문서 위에 표시 (취소선 미리보기 / 메모 위치 점)
+    let ghost = null;
+    if (live) {
+      ghost = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      ghost.setAttribute('class', 'pv-live fix');
+      ghost.style.setProperty('--c', '#e11d48');
+      setRect(ghost, live.r);
+      live.layer.querySelector('svg').appendChild(ghost);
+    } else if (mark) {
+      ghost = document.createElement('span');
+      ghost.className = 'pv-mark';
+      ghost.style.left = (mark.x * 100) + '%'; ghost.style.top = (mark.y * 100) + '%';
+      mark.layer.querySelector('.pv-pins').appendChild(ghost);
+    }
+    const ta = sheet.querySelector('textarea');
+    const close = () => { sheet.remove(); if (ghost) ghost.remove(); };
+    sheet.querySelector('[data-x]').onclick = close;
+    // 손가락을 뗀 뒤에 포커스를 줘야 휴대폰 키보드가 바로 닫히지 않는다
+    setTimeout(() => ta.focus(), 120);
+    ta.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sheet.requestSubmit(); } if (e.key === 'Escape') close(); };
+    sheet.onsubmit = (e) => {
       e.preventDefault();
       const body = ta.value.trim();
-      if (!body) return;
-      pop.remove();
-      save({ page: num, kind: 'note', data: { x, y }, body, color });
+      if (!body) return ta.focus();
+      close();
+      onSubmit(body);
     };
-    pop.addEventListener('pointerdown', e => e.stopPropagation());
+  }
+
+  // 끌어서 잡은 범위 안의 원래 글자 (PDF 글자 레이어·워드 화면 글자)
+  function textIn(pageEl, r) {
+    const pr = pageEl.getBoundingClientRect();
+    const box = { l: pr.left + r.x * pr.width, t: pr.top + r.y * pr.height, r: pr.left + (r.x + r.w) * pr.width, b: pr.top + (r.y + r.h) * pr.height };
+    const els = [...pageEl.querySelectorAll('.textLayer span, section.docx span, .docx-wrapper span')].filter(el => !el.children.length && el.textContent.trim());
+    const hit = els.filter(el => {
+      const b = el.getBoundingClientRect();
+      const midY = (b.top + b.bottom) / 2;
+      return b.right > box.l && b.left < box.r && midY > box.t - 4 && midY < box.b + 4;
+    });
+    return hit.map(el => el.textContent).join('').replace(/\s+/g, ' ').trim().slice(0, 200);
   }
 
   async function save(a) {
@@ -430,25 +482,32 @@
     pages.forEach(p => {
       const svg = p.layer.querySelector('svg'), pins = p.layer.querySelector('.pv-pins');
       const mine = list.filter(a => a.page === p.num);
-      svg.innerHTML = mine.filter(a => ['pen', 'highlight', 'underline'].includes(a.kind)).map(a => {
+      svg.innerHTML = mine.filter(a => ['pen', 'highlight', 'underline', 'fix'].includes(a.kind)).map(a => {
         const tip = `<title>${esc(who(a.user_id))} · ${esc(fmtDate(a.created_at))}${a._prev ? ' (이전 버전)' : ''}</title>`;
         const cls = `pv-a ${a.kind}${a._prev ? ' prev' : ''}${a.checked_at ? ' checked' : ''}`;
         const st = `style="--c:${esc(a.color || '#e11d48')}" data-ann="${a._prev ? '' : esc(a.id)}"`;
         const d = a.data || {};
         if (a.kind === 'pen') return `<polyline class="${cls}" ${st} points="${(d.pts || []).map(q => q.join(',')).join(' ')}">${tip}</polyline>`;
         if (a.kind === 'highlight') return `<rect class="${cls}" ${st} x="${+d.x}" y="${+d.y}" width="${+d.w}" height="${+d.h}">${tip}</rect>`;
+        // 고쳐쓰기: 연한 빨간 바탕 + 가운데 취소선
+        if (a.kind === 'fix') return `<rect class="${cls} fixbg" ${st} x="${+d.x}" y="${+d.y}" width="${+d.w}" height="${+d.h}">${tip}</rect>
+          <line class="${cls} strike" ${st} x1="${+d.x}" x2="${+d.x + +d.w}" y1="${+d.y + +d.h / 2}" y2="${+d.y + +d.h / 2}"></line>`;
         return `<line class="${cls}" ${st} x1="${+d.x}" x2="${+d.x + +d.w}" y1="${+d.y}" y2="${+d.y}">${tip}</line>`;
       }).join('');
-      const form = pins.querySelector('.pv-noteform');
-      pins.innerHTML = mine.filter(a => a.kind === 'note' || a.kind === 'stamp').map(a => {
+      // 열려 있는 팝업(답글 입력 중 등)은 다시 그려도 유지
+      const keep = [...pins.querySelectorAll(':scope > .pv-pop, :scope > .pv-mark')];
+      pins.innerHTML = mine.filter(a => a.kind === 'note' || a.kind === 'stamp' || a.kind === 'fix').map(a => {
         const d = a.data || {}, pos = `left:${+d.x * 100}%;top:${+d.y * 100}%;--c:${esc(a.color || '#2563eb')}`;
         const id = a._prev ? '' : esc(a.id);
+        const nrep = (replies[a.id] || []).length;
+        if (a.kind === 'fix') return `<button type="button" class="pv-fix${a._prev ? ' prev' : ''}${a.checked_at ? ' checked' : ''}${+d.x > 0.55 ? ' flip' : ''}" style="left:${+d.x * 100}%;top:${+d.y * 100}%" data-ann="${id}" data-open="${id}"
+          title="${esc(who(a.user_id))}: ${esc(d.orig ? d.orig + ' → ' : '')}${esc(a.body || '')}">${ctx.avatar(a.user_id, 18)}<span>${a.checked_at ? '☑ ' : ''}${esc(a.body || '')}</span>${nrep ? `<i>💬${nrep}</i>` : ''}</button>`;
         if (a.kind === 'stamp') return `<div class="pv-stamp${a._prev ? ' prev' : ''}" style="${pos}" data-ann="${id}" data-open="${id}" title="${esc(who(a.user_id))} · ${esc(fmtDate(a.created_at))}">
           <b>${esc(STAMPS[a.body] || a.body || '')}</b><small>${esc(who(a.user_id))} ${esc(fmtDate(a.created_at).split(' ')[0])}</small></div>`;
         return `<button type="button" class="pv-pin${a._prev ? ' prev' : ''}${a.checked_at ? ' checked' : ''}${+d.x > 0.6 ? ' flip' : ''}" style="${pos}" data-ann="${id}" data-open="${id}" title="${esc(who(a.user_id))}: ${esc(a.body || '')}">
-          ${ctx.avatar(a.user_id, 20)}<span>${esc((a.body || '').slice(0, 14))}${(a.body || '').length > 14 ? '…' : ''}</span></button>`;
+          ${ctx.avatar(a.user_id, 20)}<span>${esc((a.body || '').slice(0, 14))}${(a.body || '').length > 14 ? '…' : ''}</span>${nrep ? `<i>💬${nrep}</i>` : ''}</button>`;
       }).join('');
-      if (form) pins.appendChild(form);
+      keep.forEach(el => pins.appendChild(el));
     });
     renderPeople();
     ctx.onChange && ctx.onChange(anns);
@@ -460,25 +519,76 @@
   function openPop(id) {
     closePop();
     const a = anns.find(x => x.id === id);
-    const pinEl = card.querySelector(`[data-open="${CSS.escape(id)}"]`);
-    if (!a || !pinEl) return;
+    const pinEl = card.querySelector(`[data-open="${CSS.escape(id)}"]`) || card.querySelector(`[data-ann="${CSS.escape(id)}"]`);
+    if (!a) return;
+    const d = a.data || {};
     const pop = document.createElement('div');
-    pop.className = 'pv-pop';
-    pop.style.left = pinEl.style.left; pop.style.top = pinEl.style.top;
-    pop.innerHTML = `<div class="pv-pophead">${ctx.avatar(a.user_id, 24)}<b>${esc(who(a.user_id))}</b><span class="muted">${esc(fmtDate(a.created_at))}</span></div>
-      ${a.kind === 'note' ? `<div class="pv-popbody">${esc(a.body || '')}</div>` : `<div class="pv-popbody">🔖 ${esc(STAMPS[a.body] || '')} 도장</div>`}
+    // 휴대폰·페이지 밖 항목은 화면 아래 시트로, PC 는 그 자리 옆에
+    const asSheet = innerWidth < 700 || !pinEl || !pinEl.style.left;
+    pop.className = 'pv-pop' + (asSheet ? ' pv-pop-sheet' : '');
+    if (!asSheet) { pop.style.left = pinEl.style.left; pop.style.top = pinEl.style.top; }
+    const body = a.kind === 'note' ? `<div class="pv-popbody">${esc(a.body || '')}</div>`
+      : a.kind === 'fix' ? `<div class="pv-popbody pv-fixbody">${d.orig ? `<del>${esc(d.orig)}</del> → ` : ''}<ins>${esc(a.body || '')}</ins></div>`
+      : a.kind === 'stamp' ? `<div class="pv-popbody">🔖 ${esc(STAMPS[a.body] || '')} 도장</div>`
+      : `<div class="pv-popbody muted">${esc(KIND_LABEL[a.kind] || '')} · p.${a.page}</div>`;
+    pop.innerHTML = `<div class="pv-pophead">${ctx.avatar(a.user_id, 24)}<b>${esc(App.honor ? App.honor(a.user_id) : who(a.user_id))}</b><span class="muted">${esc(fmtDate(a.created_at))}</span></div>
+      ${body}
+      <div class="pv-replies">${replyList(a.id)}</div>
+      ${hasReplies ? `<form class="pv-replyform"><input type="text" maxlength="1000" placeholder="${a.kind === 'fix' ? '답글 · 다른 문구 제안' : '답글로 의견 보태기'}" enterkeyhint="send"><button class="btn sm" type="submit">💬</button></form>` : ''}
       <div class="pv-popbtns">
-        ${canCheck(a) ? `<button class="btn ghost sm" type="button" data-chk="${esc(a.id)}">${a.checked_at ? '☑ 고침 확인됨' : '☐ 고침 체크'}</button>` : (a.checked_at ? '<span class="muted">☑ 확인됨</span>' : '')}
+        ${canCheck(a) ? `<button class="btn ghost sm" type="button" data-chk="${esc(a.id)}">${a.checked_at ? '☑ 반영됨' : '☐ 반영 체크'}</button>` : (a.checked_at ? '<span class="muted">☑ 반영됨</span>' : '')}
         ${a.user_id === ctx.me.id || ctx.me.role === 'admin' ? `<button class="btn ghost sm" type="button" data-del="${esc(a.id)}" style="color:var(--bad)">삭제</button>` : ''}
         <button class="btn ghost sm" type="button" data-x>닫기</button></div>`;
-    pinEl.parentElement.appendChild(pop);
+    (asSheet ? document.body : pinEl.parentElement).appendChild(pop);
     pop.addEventListener('pointerdown', e => e.stopPropagation());
     pop.onclick = (e) => {
-      const b = e.target.closest('button'); if (!b) return;
+      const b = e.target.closest('button'); if (!b || b.type === 'submit') return;
+      if (b.dataset.repdel) return delReply(b.dataset.repdel).then(() => { const r = pop.querySelector('.pv-replies'); if (r) r.innerHTML = replyList(a.id); });
       if (b.dataset.chk) toggleCheck(b.dataset.chk);
       if (b.dataset.del) remove(b.dataset.del);
       pop.remove();
     };
+    const f = pop.querySelector('.pv-replyform');
+    if (f) f.onsubmit = async (e) => {
+      e.preventDefault();
+      const inp = f.querySelector('input'), text = inp.value.trim();
+      if (!text) return;
+      inp.disabled = true;
+      const ok = await addReply(a.id, text);
+      inp.disabled = false;
+      if (ok) { inp.value = ''; pop.querySelector('.pv-replies').innerHTML = replyList(a.id); }
+      inp.focus();
+    };
+  }
+
+  // ----- 답글 (함께 보완) -----
+  function replyList(annId) {
+    const list = replies[annId] || [];
+    return list.map(r => `<div class="pv-reply">${ctx.avatar(r.user_id, 20)}<div><b>${esc(App.honor ? App.honor(r.user_id) : who(r.user_id))}</b>
+      <span class="muted">${esc(fmtDate(r.created_at))}</span>${r.user_id === ctx.me.id || ctx.me.role === 'admin' ? ` <button type="button" class="pv-repdel" data-repdel="${esc(r.id)}" title="답글 삭제">✕</button>` : ''}
+      <div>${esc(r.body)}</div></div></div>`).join('');
+  }
+  async function addReply(annId, body) {
+    if (!hasReplies) { toast(errMsg({ message: 'annotation_replies does not exist' }), true); return false; }
+    const { data, error } = await sb.from('annotation_replies').insert({ ann_id: annId, body }).select().single();
+    if (error) { toast(errMsg(error), true); return false; }
+    const l = replies[annId] = replies[annId] || [];
+    if (!l.some(r => r.id === data.id)) l.push(data);
+    drawAll();
+    return true;
+  }
+  async function delReply(id) {
+    const { error } = await sb.from('annotation_replies').delete().eq('id', id);
+    if (error) return toast(errMsg(error), true);
+    Object.keys(replies).forEach(k => (replies[k] = replies[k].filter(r => r.id !== id)));
+    drawAll();
+  }
+  async function fetchReplies() {
+    const ids = anns.filter(a => a.kind !== 'check').map(a => a.id);
+    replies = {};
+    if (!hasReplies || !ids.length) return;
+    const { data } = await sb.from('annotation_replies').select('*').in('ann_id', ids).order('created_at');
+    (data || []).forEach(r => (replies[r.ann_id] = replies[r.ann_id] || []).push(r));
   }
 
   const canCheck = (a) => ctx.me.role === 'admin' || a.user_id === ctx.me.id || ctx.doc.uploader_id === ctx.me.id;
@@ -529,10 +639,14 @@
   async function fetchAnns() {
     const { data } = await sb.from('doc_annotations').select('*').eq('doc_id', ctx.doc.id).order('created_at');
     anns = data || [];
+    await fetchReplies().catch(() => {});
     drawAll();
   }
   async function loadAnns() {
     if (!ctx.hasV6) return;
+    // 011 (고쳐쓰기·답글) 실행 여부
+    hasReplies = await sb.from('annotation_replies').select('id').limit(1).then(r => !r.error && Array.isArray(r.data), () => false);
+    if (!hasReplies) { const fb = card.querySelector('[data-tool=fix]'); if (fb) fb.title = '고쳐쓰기는 DB 업데이트(011_fix.sql) 후에 쓸 수 있습니다'; }
     await fetchAnns();
     if (ctx.prevDocId) {
       const r = await sb.from('doc_annotations').select('*').eq('doc_id', ctx.prevDocId).order('created_at');
@@ -544,6 +658,16 @@
         if (p.eventType === 'DELETE') anns = anns.filter(a => a.id !== (p.old && p.old.id));
         else if (p.new) { const i = anns.findIndex(a => a.id === p.new.id); i < 0 ? anns.push(p.new) : (anns[i] = p.new); }
         drawAll();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'annotation_replies' }, (p) => {
+        if (p.eventType === 'DELETE') Object.keys(replies).forEach(k => (replies[k] = replies[k].filter(r => r.id !== (p.old && p.old.id))));
+        else if (p.new && anns.some(a => a.id === p.new.ann_id)) {
+          const l = replies[p.new.ann_id] = replies[p.new.ann_id] || [];
+          if (!l.some(r => r.id === p.new.id)) l.push(p.new);
+        } else return;
+        drawAll();
+        const open = document.querySelector('.pv-pop .pv-replies');
+        if (open && p.new) open.innerHTML = replyList(p.new.ann_id);
       }).subscribe();
   }
 
@@ -579,7 +703,7 @@
   }
 
   window.Viewer = {
-    init, start, reload: () => fetchAnns(), pdf, docxPages, image, plain, focus, toggleCheck, canCheck, remove,
+    init, start, reload: () => fetchAnns(), openPop, get replies() { return replies; }, get hasReplies() { return hasReplies; }, pdf, docxPages, image, plain, focus, toggleCheck, canCheck, remove,
     get anns() { return anns; },
     STAMPS, KIND_LABEL, loadPdfJs, pagesInfo: () => pages, get current() { return current; }, get filePath() { return filePath; }, scroller: () => scroller(), buildToolbar: () => buildToolbar(),
   };

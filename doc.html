@@ -14,12 +14,12 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=6.1.1">
+<link rel="stylesheet" href="style.css?v=6.2.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=6.1.1"></script>
-<script src="app.js?v=6.1.1"></script>
-<script src="viewer.js?v=6.1.1"></script>
-<script src="diff.js?v=6.1.1"></script>
+<script src="config.js?v=6.2.0"></script>
+<script src="app.js?v=6.2.0"></script>
+<script src="viewer.js?v=6.2.0"></script>
+<script src="diff.js?v=6.2.0"></script>
 </head>
 <body>
 <main class="container">
@@ -825,14 +825,14 @@
   // ----- 첨삭 목록: 밑줄·메모·도장은 '고침 체크'를 할 수 있다 -----
   var markFilter = 'all';  // var: 뷰어가 먼저 그려질 때도 참조할 수 있게
   function renderMarkupList() {
-    const items = Viewer.anns.filter(a => ['underline', 'note', 'stamp', 'highlight', 'pen'].includes(a.kind) && !String(a.id).startsWith('tmp'));
+    const items = Viewer.anns.filter(a => ['fix', 'underline', 'note', 'stamp', 'highlight', 'pen'].includes(a.kind) && !String(a.id).startsWith('tmp'));
     const cardEl = document.getElementById('markupCard');
     cardEl.hidden = !items.length;
     if (!items.length) return;
     const open = items.filter(a => a.kind !== 'pen' && a.kind !== 'highlight' && !a.checked_at).length;
-    document.getElementById('markupCount').textContent = `${items.length}${open ? ` · 고칠 것 ${open}` : ''}`;
+    document.getElementById('markupCount').textContent = `${items.length}${open ? ` · 반영할 것 ${open}` : ''}`;
     const fname = (p) => (allFiles.find(f => f.path === p) || {}).name || '';
-    document.getElementById('markupFilter').innerHTML = [['all', '전체'], ['todo', '고칠 것'], ['done', '확인됨']]
+    document.getElementById('markupFilter').innerHTML = [['all', '전체'], ['todo', '반영할 것'], ['done', '반영됨']]
       .map(([k, v]) => `<button type="button" class="chip${markFilter === k ? ' on' : ''}" data-f="${k}">${v}</button>`).join('');
     const rows = items.filter(a => markFilter === 'all' || (markFilter === 'todo' ? !a.checked_at : !!a.checked_at))
       .sort((a, b) => (a.file_path > b.file_path) - (a.file_path < b.file_path) || a.page - b.page || (a.created_at < b.created_at ? -1 : 1));
@@ -842,8 +842,9 @@
         <button type="button" class="mk-go" data-go="${esc(a.id)}">
           <span class="mk-top">${avatar(a.user_id, 20)}<b>${esc(nameOf[a.user_id] || '(퇴사자)')}</b>
             <span class="muted">${Viewer.KIND_LABEL[a.kind] || ''} · ${allFiles.length > 1 ? esc(fname(a.file_path)) + ' ' : ''}p.${a.page}</span></span>
-          ${a.kind === 'note' ? `<span class="mk-body">${esc(a.body || '')}</span>` : a.kind === 'stamp' ? `<span class="mk-body">🔖 ${esc(Viewer.STAMPS[a.body] || '')}</span>` : ''}
-          <span class="mk-meta">${esc(fmtDate(a.created_at))}${a.checked_at ? ` · ✔ ${esc(nameOf[a.checked_by] || '')} 확인` : ''}</span>
+          ${a.kind === 'note' ? `<span class="mk-body">${esc(a.body || '')}</span>` : a.kind === 'stamp' ? `<span class="mk-body">🔖 ${esc(Viewer.STAMPS[a.body] || '')}</span>`
+            : a.kind === 'fix' ? `<span class="mk-body pv-fixbody">${a.data && a.data.orig ? `<del>${esc(a.data.orig)}</del> → ` : ''}<ins>${esc(a.body || '')}</ins></span>` : ''}
+          <span class="mk-meta">${esc(fmtDate(a.created_at))}${(Viewer.replies[a.id] || []).length ? ` · 💬 답글 ${Viewer.replies[a.id].length}` : ''}${a.checked_at ? ` · ✔ ${esc(nameOf[a.checked_by] || '')} 반영` : ''}</span>
         </button>
       </li>`).join('') || '<li class="muted">해당 항목이 없습니다.</li>';
   }
@@ -851,7 +852,7 @@
     const f = e.target.closest('[data-f]'), c = e.target.closest('[data-chk]'), g = e.target.closest('[data-go]');
     if (f) { markFilter = f.dataset.f; renderMarkupList(); }
     else if (c) Viewer.toggleCheck(c.dataset.chk);
-    else if (g) Viewer.focus(g.dataset.go);
+    else if (g) { Viewer.focus(g.dataset.go); setTimeout(() => Viewer.openPop(g.dataset.go), 700); }
   });
   await Promise.allSettled([loadSteps(), loadViews(), loadComments().catch(e => console.warn('코멘트 불러오기 실패', e))]);
 
