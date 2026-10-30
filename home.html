@@ -12,13 +12,13 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=6.0.1">
+<link rel="stylesheet" href="style.css?v=6.1.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=6.0.1"></script>
-<script src="app.js?v=6.0.1"></script>
+<script src="config.js?v=6.1.0"></script>
+<script src="app.js?v=6.1.0"></script>
 </head>
 <body>
-<main class="container" style="max-width:1100px">
+<main class="container">
   <div class="home-hello">
     <div>
       <div class="page-title" id="hello">안녕하세요</div>
@@ -31,6 +31,20 @@
       <a class="btn ghost sm" href="calendar.html?new=1">＋ 일정</a>
       <a class="btn ghost sm" href="consults.html?new=1">＋ 상담</a>
     </div>
+  </div>
+
+  <!-- 한눈에 보기: 숫자 타일 + 그래프 -->
+  <section class="kpis" id="kpis">
+    <a class="kpi" href="index.html?tab=myturn"><span class="kpi-label">✍️ 내 컨펌 대기</span><b class="kpi-num" id="kTurn">–</b><span class="kpi-sub" id="kTurnSub">&nbsp;</span></a>
+    <a class="kpi" href="index.html?tab=history"><span class="kpi-label">✅ 이번 주 내가 처리</span><b class="kpi-num" id="kDone">–</b><span class="kpi-sub" id="kDoneSub">컨펌·반려</span></a>
+    <a class="kpi" href="tasks.html"><span class="kpi-label">📌 내 할 일</span><b class="kpi-num" id="kTask">–</b><span class="kpi-sub" id="kTaskSub">&nbsp;</span></a>
+    <a class="kpi" href="index.html"><span class="kpi-label">📄 최근 14일 새 문서</span><b class="kpi-num" id="kDocs">–</b><span class="kpi-sub"><svg class="spark" id="kSpark" viewBox="0 0 140 28" preserveAspectRatio="none"></svg></span></a>
+  </section>
+  <div class="dash-grid">
+    <section class="card viz" id="vizStatus"><h2>📊 문서 상태 <span class="count">최근 30일</span></h2><div class="donut-wrap" id="donut"><span class="skel" style="width:60%"></span></div></section>
+    <section class="card viz" id="vizTasks"><h2>👥 담당자별 업무</h2><div id="taskBars"><span class="skel" style="width:80%"></span></div></section>
+    <section class="card viz" id="vizTrend"><h2>📈 문서 등록 추이 <span class="count">최근 14일</span></h2><div id="trend"><span class="skel"></span></div>
+      <div class="online" id="online" hidden><span class="muted">지금 접속 중</span><span class="online-avs" id="onlineAvs"></span></div></section>
   </div>
 
   <div class="home-grid">
@@ -79,9 +93,59 @@
     const turn = docs.filter(d => d.current_approver_id === me.id);
     set('turn', turn.length ? turn.slice(0, 6).map(d => `<li><a href="doc.html?id=${encodeURIComponent(d.id)}">${d.kind === 'form' ? '📝' : fileIcon(d.file_type, d.file_name)} ${esc(d.title)}</a>
       <span class="when">${d.due_date ? App.dueBadge(d.due_date) + ' ' : ''}${esc(d.uploader_name || '')} · ${fmtDate(d.created_at)}</span></li>`).join('') : empty('컨펌할 문서가 없습니다 👍'), turn.length);
+    drawDash(docs, turn);
     set('recent', docs.length ? docs.slice(0, 6).map(d => `<li><a href="doc.html?id=${encodeURIComponent(d.id)}">${esc(d.title)}</a>
       <span class="when">${statusBadge(d.status)}</span></li>`).join('') : empty('아직 문서가 없습니다'));
   });
+
+  // ---------- 대시보드 (숫자 타일 · 도넛 · 막대 · 추이) ----------
+  const tip = document.createElement('div');
+  tip.className = 'viz-tip'; tip.hidden = true;
+  document.body.appendChild(tip);
+  const showTip = (e, text) => { tip.textContent = text; tip.hidden = false; tip.style.left = e.clientX + 'px'; tip.style.top = e.clientY + 'px'; };
+  document.addEventListener('pointermove', (e) => { const t = e.target.closest && e.target.closest('[data-tip]'); if (t) showTip(e, t.dataset.tip); else tip.hidden = true; });
+  function countUp(el, n) {
+    if (!el) return;
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches || n === 0) { el.textContent = n; return; }
+    const t0 = performance.now(), d = 600;
+    const step = (t) => { const k = Math.min(1, (t - t0) / d); el.textContent = Math.round(n * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  }
+  const DAY = 86400000;
+  function drawDash(docs, turn) {
+    countUp(document.getElementById('kTurn'), turn.length);
+    const late = turn.filter(d => d.due_date && d.due_date < today).length;
+    document.getElementById('kTurnSub').innerHTML = late ? `<span class="bad-text">기한 지남 ${late}</span>` : turn.length ? '바로 처리해 주세요' : '모두 처리했어요 👍';
+    // 최근 14일 등록 수
+    const days = [...Array(14)].map((_, i) => { const d = new Date(now); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - 13 + i); return d; });
+    const per = days.map(d => docs.filter(x => { const c = new Date(x.created_at); return c >= d && c < new Date(+d + DAY); }).length);
+    countUp(document.getElementById('kDocs'), per.reduce((a, b) => a + b, 0));
+    const mx = Math.max(1, ...per);
+    const pts = per.map((v, i) => `${(i / 13) * 140},${26 - (v / mx) * 22}`).join(' ');
+    document.getElementById('kSpark').innerHTML = `<polyline points="${pts}" class="spark-line"></polyline>`;
+    document.getElementById('trend').innerHTML = `<div class="cols">${per.map((v, i) => `<div class="col" data-tip="${days[i].getMonth() + 1}/${days[i].getDate()} · ${v}건">
+        <i style="height:${Math.max(v ? 6 : 2, (v / mx) * 100)}%"${v ? '' : ' class="zero"'}></i></div>`).join('')}</div>
+      <div class="cols-axis"><span>${days[0].getMonth() + 1}/${days[0].getDate()}</span><span>오늘</span></div>`;
+    // 문서 상태 도넛 (최근 30일)
+    const recent = docs.filter(d => now - new Date(d.created_at) < 30 * DAY);
+    const ST = [['pending', '컨펌중', 'var(--viz-warn)'], ['approved', '컨펌완료', 'var(--viz-ok)'], ['rejected', '반려', 'var(--viz-bad)'], ['none', '공유', 'var(--viz-neutral)']];
+    const cnt = ST.map(([k]) => recent.filter(d => d.status === k).length), total = cnt.reduce((a, b) => a + b, 0);
+    const R = 42, C = 2 * Math.PI * R, GAP = total > 1 ? 1.5 : 0;
+    let off = 0;
+    const arcs = ST.map(([k, l, c], i) => {
+      if (!cnt[i]) return '';
+      const len = (cnt[i] / total) * C;
+      const a = `<circle r="${R}" cx="60" cy="60" fill="none" stroke="${c}" stroke-width="16" stroke-dasharray="${Math.max(0.1, len - GAP)} ${C}" stroke-dashoffset="${-off}"
+        class="arc" data-tip="${l} ${cnt[i]}건 (${Math.round(cnt[i] / total * 100)}%)"></circle>`;
+      off += len;
+      return a;
+    }).join('');
+    document.getElementById('donut').innerHTML = total ? `<svg viewBox="0 0 120 120" class="donut" role="img" aria-label="문서 상태">
+        <g transform="rotate(-90 60 60)"><circle r="${R}" cx="60" cy="60" fill="none" stroke="var(--surface-2)" stroke-width="16"></circle>${arcs}</g>
+        <text x="60" y="58" text-anchor="middle" class="donut-n">${total}</text><text x="60" y="74" text-anchor="middle" class="donut-l">건</text></svg>
+      <ul class="legend">${ST.map(([k, l, c], i) => `<li><i style="background:${c}"></i>${l}<b>${cnt[i]}</b></li>`).join('')}</ul>`
+      : '<p class="muted">최근 30일 문서가 없습니다.</p>';
+  }
 
   // 일정
   if (v2) {
@@ -98,6 +162,39 @@
     ['tasks', 'notices', 'consults'].forEach(id => set(id, `<li>${App.V3_NOTICE}</li>`));
     return;
   }
+  // 담당자별 업무 막대 + 내 할 일 숫자
+  Promise.all([sb.from('tasks').select('assignee_id,status,done_at,due_date'), App.loadMembers().catch(() => [])]).then(([t, mem]) => {
+    const tasks = t.data || [];
+    const mine = tasks.filter(x => x.assignee_id === me.id && x.status !== 'done');
+    countUp(document.getElementById('kTask'), mine.length);
+    const lateN = mine.filter(x => x.due_date && x.due_date < today).length;
+    document.getElementById('kTaskSub').innerHTML = lateN ? `<span class="bad-text">마감 지남 ${lateN}</span>` : mine.length ? `진행 ${mine.filter(x => x.status === 'doing').length}` : '할 일 없음 🎉';
+    const by = {};
+    tasks.forEach(x => { if (!x.assignee_id) return; const r = by[x.assignee_id] = by[x.assignee_id] || { open: 0, done: 0 };
+      if (x.status !== 'done') r.open++; else if (!x.done_at || now - new Date(x.done_at) < 30 * DAY) r.done++; });
+    const rows = Object.entries(by).sort((a, b) => (b[1].open + b[1].done) - (a[1].open + a[1].done)).slice(0, 6);
+    const mx = Math.max(1, ...rows.map(([, r]) => r.open + r.done));
+    document.getElementById('taskBars').innerHTML = rows.length ? `<ul class="legend legend-row"><li><i style="background:var(--viz-1)"></i>남은 일</li><li><i style="background:var(--viz-2)"></i>완료(30일)</li></ul>
+      <div class="hbars">${rows.map(([id, r]) => `<div class="hbar">${App.avatar(id, 24)}<span class="hb-name">${esc((App.people[id] || {}).name || '?')}</span>
+        <span class="hb-track">${r.open ? `<i style="width:${r.open / mx * 100}%;background:var(--viz-1)" data-tip="${esc((App.people[id] || {}).name || '')} · 남은 일 ${r.open}"></i>` : ''}${r.done ? `<i style="width:${r.done / mx * 100}%;background:var(--viz-2)" data-tip="${esc((App.people[id] || {}).name || '')} · 완료 ${r.done}"></i>` : ''}</span>
+        <b class="hb-n">${r.open}<small>/${r.open + r.done}</small></b></div>`).join('')}</div>` : '<p class="muted">업무가 없습니다.</p>';
+    // 지금 접속 중 (v4 presence)
+    sb.from('presence').select('user_id,last_seen_at').then(({ data, error }) => {
+      if (error || !data) return;
+      const on = data.filter(p => now - new Date(p.last_seen_at) < 3 * 60000);
+      if (!on.length) return;
+      document.getElementById('online').hidden = false;
+      document.getElementById('onlineAvs').innerHTML = on.slice(0, 10).map(p => `<span class="online-av">${App.avatar(p.user_id, 28)}</span>`).join('');
+    });
+  });
+  // 이번 주 내가 처리한 컨펌
+  const wk = new Date(now); wk.setHours(0, 0, 0, 0); wk.setDate(wk.getDate() - ((wk.getDay() + 6) % 7));
+  sb.from('approval_steps').select('state,acted_at').eq('approver_id', me.id).gte('acted_at', wk.toISOString()).then(({ data }) => {
+    const l = data || [];
+    countUp(document.getElementById('kDone'), l.length);
+    const rj = l.filter(x => x.state === 'rejected').length;
+    document.getElementById('kDoneSub').textContent = l.length ? `컨펌 ${l.length - rj} · 반려 ${rj}` : '이번 주 아직 없음';
+  });
   // 내 할 일
   sb.from('tasks').select('*').eq('assignee_id', me.id).neq('status', 'done').order('due_date', { ascending: true }).then(({ data }) => {
     const list = (data || []).sort((a, b) => (a.due_date || '9999') < (b.due_date || '9999') ? -1 : 1);

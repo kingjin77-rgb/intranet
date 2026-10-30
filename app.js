@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '6.0.1';
+  const APP_VERSION = '6.1.0';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -55,7 +55,7 @@
     if (m.includes('same as the old')) return '기존 비밀번호와 다르게 정해 주세요.';
     if (m.includes('Database error saving new user') || m.includes('초대되지 않은')) return '초대되지 않은 이메일입니다. 관리자에게 등록을 요청하세요.';
     if (m.includes('Token has expired') || m.includes('invalid')) return '인증 코드가 올바르지 않거나 만료되었습니다.';
-    if (/schema cache|does not exist/.test(m) && /doc_annotations|set_avatar|toggle_annotation|avatar/.test(m)) return V6_NOTICE_TEXT;
+    if (/schema cache|does not exist/.test(m) && /doc_annotations|set_avatar|toggle_annotation|avatar|admin_set_title|title/.test(m)) return V6_NOTICE_TEXT;
     if (/schema cache|does not exist/.test(m) && /comment_reactions|attachments|add_approvers|extra_files|create_document_v3|chat_|presence|admin_user_status|leave_|attendance|bookings|resources|clock|nudge_doc|set_doc_due|toggle_comment|storage_usage|offboard|activity_log/.test(m))
       return /leave_|attendance|bookings|resources|clock|nudge_doc|set_doc_due|toggle_comment|storage_usage|offboard|activity_log/.test(m)
         ? 'DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/008_v5.sql 을 실행하면 바로 됩니다.'
@@ -118,32 +118,117 @@
     return u.toString();
   }
 
+  // ----- 화면 테마·글꼴 (페이지가 그려지기 전에 적용) -----
+  // 글꼴: Pretendard (한글 가독성용, 필요한 글자만 내려받는 dynamic subset)
+  (() => {
+    try {
+      const t = localStorage.getItem('intranet_theme');
+      if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+    } catch {}
+    if (!document.querySelector('link[data-font]')) {
+      const l = document.createElement('link');
+      l.rel = 'stylesheet'; l.dataset.font = '1';
+      l.href = 'https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css';
+      document.head.appendChild(l);
+    }
+  })();
+  function setTheme(t) {
+    try { t === 'auto' ? localStorage.removeItem('intranet_theme') : localStorage.setItem('intranet_theme', t); } catch {}
+    if (t === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  }
+
+  // ----- 아바타 (사진 또는 캐릭터, 없으면 이름 첫 글자) -----
+  const AVATAR_COLORS = ['#2457c5', '#e8590c', '#0f8a5f', '#7048e8', '#c2255c', '#0b7285', '#b35c00', '#5c940d'];
+  const CHARS = {
+    fox: ['🦊', '#ffd8a8', '#ff922b'], bear: ['🐻', '#e9d5c4', '#a47148'], panda: ['🐼', '#f1f3f5', '#adb5bd'],
+    tiger: ['🐯', '#ffe8a3', '#f59f00'], lion: ['🦁', '#ffec99', '#e8a400'], rabbit: ['🐰', '#ffdeeb', '#f783ac'],
+    penguin: ['🐧', '#d0ebff', '#4dabf7'], koala: ['🐨', '#e9ecef', '#868e96'], frog: ['🐸', '#d3f9d8', '#51cf66'],
+    dog: ['🐶', '#fff3bf', '#fab005'], cat: ['🐱', '#ffe3e3', '#ff8787'], owl: ['🦉', '#e5dbff', '#9775fa'],
+  };
+  const people = {};          // id → 프로필 (avatar 포함)
+  const avatarUrl = {};       // 'img:경로' → 서명 URL
+  function avColor(uid) {
+    let h = 0;
+    for (const ch of uid || '') h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return AVATAR_COLORS[h % AVATAR_COLORS.length];
+  }
+  // size: px. 사진은 비공개 저장소라 서명 URL 이 준비된 뒤에 보인다 (그 전엔 글자)
+  function avatar(u, size = 32, cls = '') {
+    const p = typeof u === 'string' ? (people[u] || { id: u }) : (u || {});
+    const name = p.name || '?', a = p.avatar || '';
+    const st = `width:${size}px;height:${size}px;flex-basis:${size}px;font-size:${Math.round(size * 0.44)}px`;
+    if (a.startsWith('img:') && avatarUrl[a]) return `<span class="av ${cls}" style="${st}" title="${esc(name)}"><img src="${esc(avatarUrl[a])}" alt=""></span>`;
+    const c = a.startsWith('char:') && CHARS[a.slice(5)];
+    if (c) return `<span class="av av-char ${cls}" style="${st};background:linear-gradient(135deg,${c[1]},${c[2]});font-size:${Math.round(size * 0.58)}px" title="${esc(name)}">${c[0]}</span>`;
+    return `<span class="av ${cls}" style="${st};background:${avColor(p.id)}" title="${esc(name)}">${esc(name.slice(0, 1))}</span>`;
+  }
+  async function signAvatars(list) {
+    const need = [...new Set(list.map(p => p.avatar).filter(a => a && a.startsWith('img:') && !avatarUrl[a]))];
+    if (!need.length || !sb) return;
+    try {
+      const { data } = await sb.storage.from('docs').createSignedUrls(need.map(a => a.slice(4)), 3600);
+      (data || []).forEach((d, i) => { if (d && d.signedUrl) avatarUrl[need[i]] = d.signedUrl; });
+    } catch {}
+  }
+  // 호칭: 직함이 있으면 'OOO 변호사님', 없으면 'OOO님'
+  function honor(u) {
+    const p = typeof u === 'string' ? (people[u] || {}) : (u || {});
+    return `${p.name || ''}${p.title ? ' ' + p.title : ''}님`;
+  }
+  function remember(list) { (list || []).forEach(p => { if (p && p.id) people[p.id] = { ...people[p.id], ...p }; }); }
+
+  // ----- 메뉴 (PC: 왼쪽 사이드바 / 휴대폰: 위쪽 바 + 아래 탭바 + 펼침 메뉴) -----
+  const NAV = [
+    ['home.html', '🏠', '홈'], ['chat.html', '💬', '채팅', 'chat'], ['index.html', '📄', '문서함'], ['cases.html', '⚖️', '사건'],
+    ['tasks.html', '📌', '업무'], ['calendar.html', '📅', '일정'], ['consults.html', '📞', '상담'], ['notices.html', '📢', '공지'],
+    ['library.html', '📁', '자료실'], ['office.html', '🕘', '근태·예약'],
+  ];
   function renderHeader(profile) {
+    if (profile) remember([profile]);
+    const here = location.pathname.split('/').pop() || 'index.html';
+    const link = ([href, icon, label, k]) => `<a href="${href}" class="${[k === 'chat' && 'nav-chat', here === href && 'on'].filter(Boolean).join(' ')}"${here === href ? ' aria-current="page"' : ''}>
+        <i>${icon}</i><span>${label}</span>${k === 'chat' ? '<span class="nav-badge chat-badge" id="chatBadge" hidden></span>' : ''}</a>`;
     const header = document.createElement('header');
     header.className = 'topbar';
     header.innerHTML = `
       <div class="topbar-inner">
-        <a class="brand" href="home.html">📁 ${esc(cfg.COMPANY_NAME || '')} 인트라넷</a>
+        <a class="brand" href="home.html"><span class="brand-logo${cfg.LOGO_URL ? ' has-img' : ''}">${cfg.LOGO_URL ? `<img src="${esc(cfg.LOGO_URL)}" alt="${esc(cfg.COMPANY_NAME || '')} 로고">` : esc((cfg.COMPANY_NAME || 'JL').slice(0, 2))}</span><span class="brand-name">${esc(cfg.COMPANY_NAME || '')} 인트라넷</span></a>
+        ${profile ? '<button class="side-toggle" id="sideToggle" type="button" title="메뉴 접기/펴기" aria-label="메뉴 접기">«</button>' : ''}
+        <button class="menu-btn" id="menuBtn" type="button" aria-label="메뉴 열기">☰</button>
         <nav>
-          <a href="home.html">홈</a>
-          <a href="chat.html" class="nav-chat">💬 채팅<span class="nav-badge" id="chatBadge" hidden></span></a>
-          <a href="index.html">문서함</a>
-          <a href="cases.html">사건</a>
-          <a href="tasks.html">업무</a>
-          <a href="calendar.html">일정</a>
-          <a href="consults.html">상담</a>
-          <a href="notices.html">공지</a>
-          <a href="library.html">자료실</a>
-          <a href="office.html">근태·예약</a>
-          <a href="upload.html">＋ 올리기</a>
-          ${profile && profile.role === 'admin' ? '<a href="admin.html">직원관리</a>' : ''}
-          <a href="search.html" title="통합 검색">🔍 검색</a>
-          <a href="help.html" title="PC·휴대폰 설치 안내">❓ 설치</a>
-          ${profile && 'Notification' in window && Notification.permission === 'default' ? '<button id="notifyBtn">🔔 알림 켜기</button>' : ''}
-          ${profile ? `<button id="meBtn" title="비밀번호 설정">👤 ${esc(profile.name)}</button><button id="logoutBtn">로그아웃</button>` : ''}
+          <a href="upload.html" class="nav-cta${here === 'upload.html' ? ' on' : ''}"><i>＋</i><span>문서 올리기</span></a>
+          ${NAV.map(n => link(n) + (n[0] === 'index.html' ? `
+          <a href="index.html?tab=myturn" class="nav-sub"><i>✍️</i><span>내 컨펌 대기</span><span class="nav-badge turn-badge" hidden></span></a>
+          <a href="index.html?tab=unread" class="nav-sub"><i>👀</i><span>안 읽은 문서</span><span class="nav-badge unread-badge" hidden></span></a>` : '')).join('')}
+          <div class="nav-sep"></div>
+          ${profile && profile.role === 'admin' ? `<a href="admin.html"${here === 'admin.html' ? ' class="on"' : ''}><i>🛡</i><span>직원관리</span></a>` : ''}
+          <a href="search.html" title="통합 검색"${here === 'search.html' ? ' class="on"' : ''}><i>🔍</i><span>검색</span></a>
+          <a href="help.html" title="PC·휴대폰 설치 안내"${here === 'help.html' ? ' class="on"' : ''}><i>❓</i><span>설치</span></a>
+          <div class="nav-foot">
+            ${profile && 'Notification' in window && Notification.permission === 'default' ? '<button id="notifyBtn" type="button"><i>🔔</i><span>알림 켜기</span></button>' : ''}
+            ${profile ? `<button id="meBtn" type="button" title="내 정보 · 아바타 · 비밀번호">${avatar(profile, 28, 'me-av')}<span>${esc(profile.name)}</span></button><button id="logoutBtn" type="button"><i>↪</i><span>로그아웃</span></button>` : ''}
+          </div>
         </nav>
       </div>`;
     document.body.prepend(header);
+    document.body.classList.add('has-nav');
+    try { if (localStorage.getItem('intranet_side') === 'mini') document.body.classList.add('side-mini'); } catch {}
+    // 휴대폰 아래 탭바
+    if (profile) {
+      const tb = document.createElement('nav');
+      tb.className = 'tabbar';
+      tb.innerHTML = [['home.html', '🏠', '홈'], ['index.html', '📄', '문서'], ['upload.html', '＋', '올리기'], ['chat.html', '💬', '채팅'], ['tasks.html', '📌', '업무']]
+        .map(([h, i, l]) => `<a href="${h}"${here === h ? ' class="on"' : ''}><i>${i}</i><span>${l}</span>${h === 'chat.html' ? '<b class="chat-badge" hidden></b>' : ''}</a>`).join('');
+      document.body.appendChild(tb);
+    }
+    const menu = header.querySelector('#menuBtn');
+    menu.onclick = () => document.body.classList.toggle('nav-open');
+    header.querySelector('nav').addEventListener('click', (e) => { if (e.target.closest('a')) document.body.classList.remove('nav-open'); });
+    const st = header.querySelector('#sideToggle');
+    if (st) st.onclick = () => {
+      const mini = document.body.classList.toggle('side-mini');
+      try { localStorage.setItem('intranet_side', mini ? 'mini' : 'full'); } catch {}
+    };
     const btn = header.querySelector('#logoutBtn');
     if (btn) btn.onclick = async () => {
       try { localStorage.removeItem(WATCH_KEY); } catch {}
@@ -152,7 +237,11 @@
       location.href = 'login.html';
     };
     const mb = header.querySelector('#meBtn');
-    if (mb) mb.onclick = () => openPasswordDialog();
+    if (mb) {
+      mb.onclick = () => openProfileDialog(profile);
+      // 내 사진 아바타는 서명 URL 을 받은 뒤 바꿔 끼운다
+      signAvatars([profile]).then(() => { const el = mb.querySelector('.me-av'); if (el) el.outerHTML = avatar(profile.id, 28, 'me-av'); });
+    }
     const nb = header.querySelector('#notifyBtn');
     if (nb) nb.onclick = async () => {
       const r = await Notification.requestPermission();
@@ -160,6 +249,106 @@
       if (r === 'granted') subscribePush(profile).catch(e => console.warn('푸시 등록 실패', e));
       toast(r === 'granted' ? '알림을 켰습니다. 새 문서·코멘트·열람 확인·컨펌을 알려드려요.' : '알림이 꺼져 있습니다. 브라우저 설정에서 켤 수 있어요.', r !== 'granted');
     };
+  }
+
+  // ----- 내 정보: 아바타(사진·캐릭터) · 화면 테마 · 비밀번호 -----
+  function openProfileDialog(profile) {
+    if (document.getElementById('meDialog')) return;
+    const me = people[profile.id] || profile;
+    const wrap = document.createElement('div');
+    wrap.id = 'meDialog';
+    wrap.className = 'modal-back';
+    let theme = 'auto';
+    try { theme = localStorage.getItem('intranet_theme') || 'auto'; } catch {}
+    wrap.innerHTML = `
+      <div class="card modal me-modal">
+        <div class="me-head"><span id="meAvPreview">${avatar(me, 64)}</span><div><h2>${esc(me.name)}</h2><p class="muted">${esc([me.dept, me.email].filter(Boolean).join(' · '))}</p></div></div>
+        <h3>아바타</h3>
+        <div class="av-grid">
+          <label class="av-pick av-photo" title="사진 올리기">📷<span>사진</span><input type="file" id="avFile" accept="image/*" hidden></label>
+          ${Object.keys(CHARS).map(k => `<button type="button" class="av-pick${me.avatar === 'char:' + k ? ' on' : ''}" data-char="${k}" title="${k}">${avatar({ id: me.id, name: me.name, avatar: 'char:' + k }, 40)}</button>`).join('')}
+          <button type="button" class="av-pick${!me.avatar ? ' on' : ''}" data-char="" title="이름 글자">${avatar({ id: me.id, name: me.name }, 40)}</button>
+        </div>
+        <h3>화면</h3>
+        <div class="seg" id="themeSeg">${[['auto', '자동'], ['light', '밝게'], ['dark', '어둡게']].map(([k, v]) => `<button type="button" data-theme="${k}"${theme === k ? ' class="on"' : ''}>${v}</button>`).join('')}</div>
+        <div class="btn-row">
+          <button class="btn ghost" type="button" id="pwOpen">🔑 비밀번호 변경</button>
+          <button class="btn" type="button" data-close style="margin-left:auto">닫기</button>
+        </div>
+      </div>`;
+    document.body.appendChild(wrap);
+    const close = () => wrap.remove();
+    wrap.addEventListener('click', (e) => { if (e.target === wrap || e.target.closest('[data-close]')) close(); });
+    wrap.querySelector('#pwOpen').onclick = () => { close(); openPasswordDialog(); };
+    wrap.querySelector('#themeSeg').onclick = (e) => {
+      const b = e.target.closest('[data-theme]'); if (!b) return;
+      setTheme(b.dataset.theme);
+      wrap.querySelectorAll('#themeSeg button').forEach(x => x.classList.toggle('on', x === b));
+    };
+    const save = async (val) => {
+      const { error } = await sb.rpc('set_avatar', { p: val || null });
+      if (error) return toast(errMsg(error), true);
+      me.avatar = val || null; remember([me]);
+      await signAvatars([me]);
+      wrap.querySelector('#meAvPreview').innerHTML = avatar(me, 64);
+      wrap.querySelectorAll('.av-pick[data-char]').forEach(b => b.classList.toggle('on', (b.dataset.char ? 'char:' + b.dataset.char : '') === (val || '')));
+      document.querySelectorAll('.me-av').forEach(el => (el.outerHTML = avatar(me, 28, 'me-av')));
+      toast('아바타를 바꿨습니다.');
+    };
+    wrap.querySelectorAll('.av-pick[data-char]').forEach(b => (b.onclick = () => save(b.dataset.char ? 'char:' + b.dataset.char : '')));
+    wrap.querySelector('#avFile').onchange = async (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      try {
+        // 정사각형으로 잘라 256px JPEG 로 줄여서 올린다 (원본 사진은 올리지 않음)
+        const bmp = await createImageBitmap(f);
+        const side = Math.min(bmp.width, bmp.height), cv = document.createElement('canvas');
+        cv.width = cv.height = 256;
+        cv.getContext('2d').drawImage(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, 256, 256);
+        const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.86));
+        const path = `${me.id}/avatar-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}.jpg`;
+        const { error } = await sb.storage.from('docs').upload(path, blob, { contentType: 'image/jpeg', upsert: false });
+        if (error) return toast(errMsg(error), true);
+        const old = me.avatar;
+        await save('img:' + path);
+        if (old && old.startsWith('img:')) sb.storage.from('docs').remove([old.slice(4)]).catch(() => {});
+      } catch (err) { toast('사진을 읽지 못했습니다. JPG·PNG 사진을 골라 주세요.', true); }
+    };
+  }
+
+  // ----- ✉️ 우편 전송 애니메이션: 버튼에서 봉투가 날아가 받는 사람(또는 메뉴)으로 -----
+  function sendMail(from, opts = {}) {
+    try {
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { if (opts.label) toast(opts.label); return; }
+      const src = (from && from.getBoundingClientRect) ? from.getBoundingClientRect() : { left: innerWidth / 2, top: innerHeight / 2, width: 0, height: 0 };
+      const target = (opts.to && document.querySelector(opts.to)) || document.querySelector('.tabbar a.on, .topbar nav a.on') || document.querySelector('.brand');
+      const dst = target ? target.getBoundingClientRect() : { left: 20, top: 20, width: 0, height: 0 };
+      const x0 = src.left + src.width / 2, y0 = src.top + src.height / 2;
+      const x1 = dst.left + dst.width / 2, y1 = dst.top + dst.height / 2;
+      const el = document.createElement('div');
+      el.className = 'mail-fly' + (opts.small ? ' small' : '');
+      el.innerHTML = opts.small ? '<span>🕊️</span>' : '<span class="env"><b class="flap"></b><b class="body"></b><b class="seal">✉️</b></span>';
+      el.style.left = x0 + 'px'; el.style.top = y0 + 'px';
+      document.body.appendChild(el);
+      const lift = Math.min(240, Math.abs(x1 - x0) * 0.4 + 120);
+      const anim = el.animate([
+        { transform: 'translate(-50%,-50%) scale(.4) rotate(0deg)', opacity: 0 },
+        { transform: 'translate(-50%,-50%) scale(1.1) rotate(-6deg)', opacity: 1, offset: 0.18 },
+        { transform: `translate(calc(-50% + ${(x1 - x0) * 0.5}px), calc(-50% + ${(y1 - y0) * 0.5 - lift}px)) scale(.9) rotate(${x1 > x0 ? 18 : -18}deg)`, opacity: 1, offset: 0.6 },
+        { transform: `translate(calc(-50% + ${x1 - x0}px), calc(-50% + ${y1 - y0}px)) scale(.25) rotate(0deg)`, opacity: 0.2 },
+      ], { duration: opts.small ? 650 : 1100, easing: 'cubic-bezier(.45,.05,.35,1)' });
+      anim.onfinish = () => {
+        el.remove();
+        if (target) { target.classList.remove('mail-hit'); void target.offsetWidth; target.classList.add('mail-hit'); }
+        if (opts.label) {
+          const b = document.createElement('div');
+          b.className = 'mail-done'; b.textContent = opts.label;
+          b.style.left = x1 + 'px'; b.style.top = y1 + 'px';
+          document.body.appendChild(b);
+          setTimeout(() => b.remove(), 1600);
+        }
+      };
+    } catch {}
   }
 
   // ----- 휴대폰 푸시 구독 (앱을 꺼 둬도 알림) -----
@@ -244,8 +433,7 @@
     setBadge(n);
     // 크롬 확장프로그램이 있으면 툴바 아이콘에도 숫자를 표시
     window.postMessage({ type: 'intranet-badge', count: n }, location.origin);
-    const el = document.getElementById('chatBadge');
-    if (el) { el.textContent = badgeState.chat > 99 ? '99+' : String(badgeState.chat); el.hidden = !badgeState.chat; }
+    document.querySelectorAll('.chat-badge').forEach(el => { el.textContent = badgeState.chat > 99 ? '99+' : String(badgeState.chat); el.hidden = !badgeState.chat; });
   }
 
   function startWatch(me) {
@@ -264,7 +452,8 @@
       // 처음 한 번은 기준만 잡고 알리지 않는다
       if (state) {
         const myTurn = steps.data.filter(s => !state.steps.includes(s.id));
-        myTurn.forEach(s => notify('✍️ 컨펌 차례입니다', (s.documents && s.documents.title) || '', s.doc_id));
+        // 변호사님께는 '검토 부탁드립니다', 나머지는 'OOO님, 컨펌 부탁드립니다'
+        myTurn.forEach(s => notify(me.title === '변호사' ? `⚖️ ${honor(me)}, 검토 부탁드립니다` : `✍️ ${honor(me)}, 컨펌 부탁드립니다`, (s.documents && s.documents.title) || '', s.doc_id));
         docs.data.filter(d => d.created_at > state.lastDocAt && d.uploader_id !== me.id && !myTurn.some(s => s.doc_id === d.id))
           .forEach(d => notify('📄 새 문서가 올라왔습니다', d.title, d.id));
       }
@@ -272,7 +461,20 @@
       state = { user: me.id, steps: stepIds, lastDocAt: lastDocAt > prevAt ? lastDocAt : prevAt };
       try { localStorage.setItem(WATCH_KEY, JSON.stringify(state)); } catch {}
       badgeState.confirm = stepIds.length;
+      document.querySelectorAll('.turn-badge').forEach(el => { el.textContent = stepIds.length; el.hidden = !stepIds.length; });
       pushBadge();
+      // 메뉴의 '안 읽은 문서' 숫자 (최근 문서 중 내가 아직 안 연 것)
+      const [recent, seen] = await Promise.all([
+        sb.from('documents').select('id,uploader_id,group_id,version').order('created_at', { ascending: false }).limit(200),
+        sb.from('document_views').select('doc_id').eq('user_id', me.id),
+      ]);
+      if (!recent.error && !seen.error) {
+        const seenSet = new Set((seen.data || []).map(v => v.doc_id));
+        const latest = {};
+        (recent.data || []).forEach(d => { const g = d.group_id || d.id; if (!latest[g] || d.version > latest[g].version) latest[g] = d; });
+        const n = Object.values(latest).filter(d => d.uploader_id !== me.id && !seenSet.has(d.id)).length;
+        document.querySelectorAll('.unread-badge').forEach(el => { el.textContent = n > 99 ? '99+' : n; el.hidden = !n; });
+      }
     }
     // v3: 나에게 온 새 업무 지시 · 새 공지
     const WATCH3 = 'intranet_watch3';
@@ -416,8 +618,11 @@
   }
 
   async function loadMembers() {
-    const { data, error } = await sb.from('profiles').select('id,name,dept,role,active').eq('active', true).order('name');
+    // '*': 010 실행 뒤엔 avatar 도 함께 (실행 전엔 컬럼이 없어도 오류 없이)
+    const { data, error } = await sb.from('profiles').select('*').eq('active', true).order('name');
     if (error) throw error;
+    remember(data);
+    await signAvatars(data);
     return data;
   }
 
@@ -657,5 +862,5 @@
     (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
   }
 
-  window.App = { hasV6, V6_NOTICE_TEXT, saveFile, dueBadge, hasV5, V5_NOTICE, logActivity, attachMention, hasV4, V4_NOTICE, refreshChatBadge: () => refreshChat(), snapshotFile, uploadFile, sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, hasV3, V3_NOTICE, TASK_STATUS, CONSULT_STATUS, ymdLocal, ddayDate, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
+  window.App = { honor, avatar, avColor, people, remember, signAvatars, sendMail, setTheme, hasV6, V6_NOTICE_TEXT, saveFile, dueBadge, hasV5, V5_NOTICE, logActivity, attachMention, hasV4, V4_NOTICE, refreshChatBadge: () => refreshChat(), snapshotFile, uploadFile, sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, hasV3, V3_NOTICE, TASK_STATUS, CONSULT_STATUS, ymdLocal, ddayDate, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
 })();

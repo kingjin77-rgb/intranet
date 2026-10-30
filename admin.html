@@ -12,10 +12,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=6.0.1">
+<link rel="stylesheet" href="style.css?v=6.1.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=6.0.1"></script>
-<script src="app.js?v=6.0.1"></script>
+<script src="config.js?v=6.1.0"></script>
+<script src="app.js?v=6.1.0"></script>
 </head>
 <body>
 <main class="container">
@@ -49,7 +49,7 @@
     <h2>👥 가입한 직원 <span class="count" id="memberCount"></span></h2>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>이름</th><th>부서</th><th>이메일</th><th>권한</th><th>사용</th><th></th></tr></thead>
+        <thead><tr><th>이름</th><th>직함</th><th>부서</th><th>이메일</th><th>권한</th><th>사용</th><th></th></tr></thead>
         <tbody id="members"></tbody>
       </table>
     </div>
@@ -102,12 +102,14 @@
       sb.from('allowed_emails').select('*').order('created_at', { ascending: false }),
     ]);
     if (p.error || a.error) return toast(errMsg(p.error || a.error), true);
+    App.remember(p.data); await App.signAvatars(p.data);
     const joined = new Set(p.data.map(x => x.email));
 
     document.getElementById('memberCount').textContent = `${p.data.filter(x => x.active).length}명`;
     document.getElementById('members').innerHTML = p.data.map(x => `
       <tr data-id="${x.id}">
         <td><input type="text" name="name" value="${esc(x.name)}"></td>
+        <td><input type="text" name="title" value="${esc(x.title || '')}" placeholder="예: 변호사" ${'title' in x ? '' : 'disabled title="010_v6.sql 실행 후 사용"'} style="width:90px"></td>
         <td><input type="text" name="dept" value="${esc(x.dept || '')}"></td>
         <td class="muted">${esc(x.email)}</td>
         <td><select name="role"><option value="member" ${x.role === 'member' ? 'selected' : ''}>일반</option><option value="admin" ${x.role === 'admin' ? 'selected' : ''}>관리자</option></select></td>
@@ -151,6 +153,11 @@
         p_role: q('role').value, p_active: q('active').checked,
       });
       if (error) return toast(errMsg(error), true);
+      // 직함(변호사 등): 알림 호칭 'OOO 변호사님'에 쓰인다
+      if (!q('title').disabled) {
+        const t = await sb.rpc('admin_set_title', { p_id: tr.dataset.id, p_title: q('title').value });
+        if (t.error) return toast(errMsg(t.error), true);
+      }
       toast('저장했습니다.');
       load();
     } else if (b.dataset.act === 'offboard') {
@@ -197,7 +204,7 @@
     document.getElementById('statusCard').hidden = false;
     document.getElementById('onlineCount').textContent = `${rows.filter(on).length}명 접속 중 / ${rows.length}명`;
     document.getElementById('statusRows').innerHTML = rows.map(r => `<tr>
-      <td><b>${esc(r.name)}</b> <span class="muted">${esc(r.dept || '')}</span></td>
+      <td>${App.avatar(r.id, 26)} <b>${esc(r.name)}</b> <span class="muted">${esc(r.dept || '')}</span></td>
       <td>${on(r) ? '<span class="st-on">🟢 접속 중</span>' : r.last_seen_at ? '<span class="muted">⚪ 오프라인</span>' : '<span class="muted">—</span>'}</td>
       <td>${ago(r.last_seen_at)}</td>
       <td>${r.last_sign_in_at ? esc(App.fmtDate(r.last_sign_in_at)) : '<span class="muted">로그인 안 함</span>'}</td>

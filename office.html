@@ -12,10 +12,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=6.0.1">
+<link rel="stylesheet" href="style.css?v=6.1.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=6.0.1"></script>
-<script src="app.js?v=6.0.1"></script>
+<script src="config.js?v=6.1.0"></script>
+<script src="app.js?v=6.1.0"></script>
 </head>
 <body>
 <main class="container">
@@ -119,7 +119,8 @@
     return;
   }
   const admin = me.role === 'admin';
-  const { data: ppl } = await sb.from('profiles').select('id,name,dept,role,active').order('name');
+  const { data: ppl } = await sb.from('profiles').select('*').order('name');
+  App.remember(ppl);
   const people = Object.fromEntries((ppl || []).map(p => [p.id, p]));
   const nameOf = (id) => (people[id] && people[id].name) || '(퇴사자)';
   const kst = (d = new Date()) => App.ymdLocal(d);
@@ -210,7 +211,8 @@
     const { error } = await sb.rpc('request_leave', { p_kind: document.getElementById('lKind').value, p_start: document.getElementById('lStart').value,
       p_end: document.getElementById('lEnd').value, p_reason: document.getElementById('lReason').value, p_approver: apSel.value });
     if (error) return toast(errMsg(error), true);
-    toast(`${nameOf(apSel.value)}님께 승인 요청을 보냈습니다.`);
+    App.sendMail(e.target.querySelector('[type=submit]'), { label: `📮 ${App.honor(apSel.value)}께 전달` });
+    toast(`${App.honor(apSel.value)}께 승인 요청을 보냈습니다.`);
     document.getElementById('lReason').value = '';
     loadLeaves();
   };

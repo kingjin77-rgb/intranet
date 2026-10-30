@@ -14,10 +14,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=6.0.1">
+<link rel="stylesheet" href="style.css?v=6.1.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=6.0.1"></script>
-<script src="app.js?v=6.0.1"></script>
+<script src="config.js?v=6.1.0"></script>
+<script src="app.js?v=6.1.0"></script>
 </head>
 <body>
 <main class="container">
@@ -136,7 +136,7 @@
   });
 
   const initTab = new URLSearchParams(location.search).get('tab');
-  if (['myturn', 'history'].includes(initTab)) document.querySelector(`[data-tab=${initTab}]`).click();
+  if (['myturn', 'unread', 'mine', 'history'].includes(initTab)) document.querySelector(`[data-tab=${initTab}]`).click();
   await load();
 
   // 다른 사람이 문서를 올리거나 컨펌이 진행되면 목록 갱신

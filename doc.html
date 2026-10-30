@@ -14,12 +14,12 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=6.0.1">
+<link rel="stylesheet" href="style.css?v=6.1.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=6.0.1"></script>
-<script src="app.js?v=6.0.1"></script>
-<script src="viewer.js?v=6.0.1"></script>
-<script src="diff.js?v=6.0.1"></script>
+<script src="config.js?v=6.1.0"></script>
+<script src="app.js?v=6.1.0"></script>
+<script src="viewer.js?v=6.1.0"></script>
+<script src="diff.js?v=6.1.0"></script>
 </head>
 <body>
 <main class="container">
@@ -152,10 +152,10 @@
   await sb.rpc('record_view', { p_doc_id: docId });
 
   const members = await App.loadMembers();
-  const { data: uploader } = await sb.from('profiles').select('id,name,dept').eq('id', doc.uploader_id).maybeSingle();
+  const { data: uploader } = await sb.from('profiles').select('*').eq('id', doc.uploader_id).maybeSingle();
   const nameOf = {};
   members.forEach(m => (nameOf[m.id] = m.name));
-  if (uploader) nameOf[uploader.id] = uploader.name;
+  if (uploader) { nameOf[uploader.id] = uploader.name; if (!App.people[uploader.id]) App.remember([uploader]); }
 
   // ----- 문서 정보 + 뷰어 -----
   document.getElementById('title').textContent = doc.title;
@@ -193,7 +193,7 @@
   ]);
   Viewer.init({
     doc, me, nameOf, hasV6, prevDocId: prevDoc && prevDoc.id,
-    avatar: (uid) => avatar(uid),
+    avatar: (uid, size) => avatar(uid, size),
     onChange: () => renderMarkupList(),
     switchFile: async (path) => {
       const i = allFiles.findIndex(f => f.path === path);
@@ -370,7 +370,7 @@
     document.getElementById('steps').innerHTML = steps.map(st => `
       <li class="${st.state}">
         <span class="dot"></span>
-        <div class="who">${esc(nameOf[st.approver_id] || '(퇴사자)')}${st.approver_id === me.id ? ' (나)' : ''}</div>
+        <div class="who">${avatar(st.approver_id, 22)} ${esc(nameOf[st.approver_id] || '(퇴사자)')}${st.approver_id === me.id ? ' (나)' : ''}</div>
         <div class="note">${label[st.state]}${st.acted_at ? ' · ' + fmtDate(st.acted_at) : ''}</div>
         ${st.comment ? `<div class="say">${esc(st.comment)}</div>` : ''}
       </li>`).join('');
@@ -415,6 +415,7 @@
     const { data, error } = await sb.rpc('nudge_doc', { p_doc: docId, p_kind: kind });
     btn.disabled = false;
     if (error) return toast(errMsg(error), true);
+    if (data) App.sendMail(btn, { label: `📮 ${data}명에게 전달` });
     toast(data ? `${data}명에게 알림을 보냈습니다.` : '보낼 사람이 없습니다.');
   }
   document.getElementById('nudgeApprovers').onclick = (e) => nudge('approvers', e.target);
@@ -439,8 +440,9 @@
     const { error } = await sb.rpc('add_approvers', { p_doc_id: docId, p_approvers: ids });
     e.target.disabled = false;
     if (error) return toast(errMsg(error), true);
+    App.sendMail(e.target, { label: `📮 ${ids.map(id => App.honor(id)).join(', ')}께 전달` });
     pick.hidden = true;
-    toast(`${ids.map(id => nameOf[id]).join(', ')}님께 컨펌을 요청했습니다.`);
+    toast(`${ids.map(id => App.honor(id)).join(', ')}께 컨펌을 요청했습니다.`);
     loadSteps();
   };
 
@@ -458,6 +460,7 @@
     b.disabled = false;
     if (error) return toast(errMsg(error), true);
     document.getElementById('actComment').value = '';
+    App.sendMail(b, { label: decision === 'approved' ? '✅ 컨펌 결과 전달' : '↩️ 반려 결과 전달' });
     toast(decision === 'approved' ? '컨펌했습니다.' : '반려했습니다.');
     loadSteps();
   };
@@ -503,12 +506,9 @@
     .then(r => !r.error && Array.isArray(r.data), () => false);
   let reactT, pending = [], groupDocs = null, showResolved = false;
 
-  const AVATAR_COLORS = ['#1a4f8a', '#e8821a', '#15803d', '#7c3aed', '#be185d', '#0e7490', '#b45309', '#4d7c0f'];
-  function avatar(uid) {
-    const name = nameOf[uid] || '?';
-    let h = 0;
-    for (const ch of uid || '') h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-    return `<span class="xc-avatar" style="background:${AVATAR_COLORS[h % AVATAR_COLORS.length]}">${esc(name.slice(0, 1))}</span>`;
+  // 사진·캐릭터 아바타 (app.js). 퇴사자 등 목록에 없는 사람은 이름 첫 글자
+  function avatar(uid, size = 38) {
+    return App.avatar(App.people[uid] || { id: uid, name: nameOf[uid] || '?' }, size, 'xc-avatar');
   }
   function ago(iso) {
     const s = (Date.now() - new Date(iso)) / 1000;
@@ -840,7 +840,7 @@
       <li class="mk-item${a.checked_at ? ' done' : ''}">
         ${Viewer.canCheck(a) ? `<button type="button" class="mk-check" data-chk="${esc(a.id)}" title="고침 체크">${a.checked_at ? '☑' : '☐'}</button>` : `<span class="mk-check">${a.checked_at ? '☑' : '☐'}</span>`}
         <button type="button" class="mk-go" data-go="${esc(a.id)}">
-          <span class="mk-top">${avatar(a.user_id)}<b>${esc(nameOf[a.user_id] || '(퇴사자)')}</b>
+          <span class="mk-top">${avatar(a.user_id, 20)}<b>${esc(nameOf[a.user_id] || '(퇴사자)')}</b>
             <span class="muted">${Viewer.KIND_LABEL[a.kind] || ''} · ${allFiles.length > 1 ? esc(fname(a.file_path)) + ' ' : ''}p.${a.page}</span></span>
           ${a.kind === 'note' ? `<span class="mk-body">${esc(a.body || '')}</span>` : a.kind === 'stamp' ? `<span class="mk-body">🔖 ${esc(Viewer.STAMPS[a.body] || '')}</span>` : ''}
           <span class="mk-meta">${esc(fmtDate(a.created_at))}${a.checked_at ? ` · ✔ ${esc(nameOf[a.checked_by] || '')} 확인` : ''}</span>
