@@ -12,10 +12,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=6.0.1">
+<link rel="stylesheet" href="style.css?v=6.1.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=6.0.1"></script>
-<script src="app.js?v=6.0.1"></script>
+<script src="config.js?v=6.1.0"></script>
+<script src="app.js?v=6.1.0"></script>
 </head>
 <body>
 <main class="container">
@@ -146,8 +146,9 @@
     };
     const { error } = await sb.from('tasks').insert(row);
     if (error) return toast(errMsg(error), true);
+    if (row.assignee_id !== me.id) App.sendMail(form.querySelector('[type=submit]'), { label: `📮 ${App.honor(row.assignee_id)}께 업무 전달` });
     form.reset(); form.hidden = true;
-    toast(row.assignee_id === me.id ? '할 일을 추가했습니다.' : `${nameOf[row.assignee_id]}님에게 업무를 지시했습니다.`);
+    toast(row.assignee_id === me.id ? '할 일을 추가했습니다.' : `${App.honor(row.assignee_id)}께 업무를 지시했습니다.`);
     document.getElementById('tAssignee').value = me.id;
     if (row.assignee_id !== me.id) document.querySelector('[data-tab=given]').click();
     load();

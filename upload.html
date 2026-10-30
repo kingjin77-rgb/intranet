@@ -12,10 +12,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=6.0.1">
+<link rel="stylesheet" href="style.css?v=6.1.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=6.0.1"></script>
-<script src="app.js?v=6.0.1"></script>
+<script src="config.js?v=6.1.0"></script>
+<script src="app.js?v=6.1.0"></script>
 </head>
 <body>
 <main class="container" style="max-width:640px">
@@ -298,6 +298,11 @@
   async function finish(docId) {
     const due = document.getElementById('dueDate').value;
     if (due && approvers.length) await sb.rpc('set_doc_due', { p_doc: docId, p_due: due });
+    // ✉️ 컨펌 요청이 날아가는 모습을 잠깐 보여준 뒤 문서 화면으로
+    if (approvers.length) {
+      App.sendMail(document.getElementById('submitBtn'), { label: '📮 컨펌 요청 전달' });
+      await new Promise(r => setTimeout(r, 1100));
+    }
     location.replace(`doc.html?id=${encodeURIComponent(docId)}&new=1`);
   }
 

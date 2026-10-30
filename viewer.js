@@ -446,7 +446,7 @@
         if (a.kind === 'stamp') return `<div class="pv-stamp${a._prev ? ' prev' : ''}" style="${pos}" data-ann="${id}" data-open="${id}" title="${esc(who(a.user_id))} · ${esc(fmtDate(a.created_at))}">
           <b>${esc(STAMPS[a.body] || a.body || '')}</b><small>${esc(who(a.user_id))} ${esc(fmtDate(a.created_at).split(' ')[0])}</small></div>`;
         return `<button type="button" class="pv-pin${a._prev ? ' prev' : ''}${a.checked_at ? ' checked' : ''}${+d.x > 0.6 ? ' flip' : ''}" style="${pos}" data-ann="${id}" data-open="${id}" title="${esc(who(a.user_id))}: ${esc(a.body || '')}">
-          ${ctx.avatar(a.user_id)}<span>${esc((a.body || '').slice(0, 14))}${(a.body || '').length > 14 ? '…' : ''}</span></button>`;
+          ${ctx.avatar(a.user_id, 20)}<span>${esc((a.body || '').slice(0, 14))}${(a.body || '').length > 14 ? '…' : ''}</span></button>`;
       }).join('');
       if (form) pins.appendChild(form);
     });
@@ -465,7 +465,7 @@
     const pop = document.createElement('div');
     pop.className = 'pv-pop';
     pop.style.left = pinEl.style.left; pop.style.top = pinEl.style.top;
-    pop.innerHTML = `<div class="pv-pophead">${ctx.avatar(a.user_id)}<b>${esc(who(a.user_id))}</b><span class="muted">${esc(fmtDate(a.created_at))}</span></div>
+    pop.innerHTML = `<div class="pv-pophead">${ctx.avatar(a.user_id, 24)}<b>${esc(who(a.user_id))}</b><span class="muted">${esc(fmtDate(a.created_at))}</span></div>
       ${a.kind === 'note' ? `<div class="pv-popbody">${esc(a.body || '')}</div>` : `<div class="pv-popbody">🔖 ${esc(STAMPS[a.body] || '')} 도장</div>`}
       <div class="pv-popbtns">
         ${canCheck(a) ? `<button class="btn ghost sm" type="button" data-chk="${esc(a.id)}">${a.checked_at ? '☑ 고침 확인됨' : '☐ 고침 체크'}</button>` : (a.checked_at ? '<span class="muted">☑ 확인됨</span>' : '')}
@@ -502,7 +502,7 @@
     const ids = Object.keys(counts);
     box.hidden = !ids.length && !prevAnns.length;
     box.innerHTML = (ids.length ? '<span class="muted">첨삭</span>' : '') + ids.map(id => `<button type="button" class="pv-who${hidden.has(id) ? ' off' : ''}" data-who="${esc(id)}" title="눌러서 보이기/숨기기">
-        ${ctx.avatar(id)}<span>${esc(who(id))}</span><b>${counts[id]}</b></button>`).join('') +
+        ${ctx.avatar(id, 22)}<span>${esc(who(id))}</span><b>${counts[id]}</b></button>`).join('') +
       (prevAnns.length ? `<button type="button" class="pv-who pv-prevbtn${showPrev ? ' on' : ''}" data-act="prevAnns">🕘 이전 버전 첨삭 ${prevAnns.length}</button>` : '');
   }
 

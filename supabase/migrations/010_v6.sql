@@ -115,3 +115,91 @@ end;
 $$;
 revoke all on function public.set_avatar(text) from public, anon;
 grant execute on function public.set_avatar(text) to authenticated;
+
+-- ---------------------------------------------------------------------
+-- 3. 호칭: 변호사님은 'OOO 변호사님', 나머지는 'OOO님'
+--    직함은 직원관리에서 바꿀 수 있고, 처음엔 이지훈·하혜용 두 분을 변호사로
+-- ---------------------------------------------------------------------
+alter table public.profiles add column if not exists title text check (title is null or length(title) <= 20);
+update public.profiles set title = '변호사' where name in ('이지훈', '하혜용') and title is null;
+
+create or replace function public.honor(p_id uuid)
+returns text language sql stable security definer set search_path = public as $$
+  select coalesce(name, '') || case when coalesce(title, '') <> '' then ' ' || title || '님' else '님' end
+  from public.profiles where id = p_id;
+$$;
+revoke all on function public.honor(uuid) from public, anon, authenticated;
+
+create or replace function public.admin_set_title(p_id uuid, p_title text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception '관리자만 직함을 바꿀 수 있습니다'; end if;
+  update public.profiles set title = nullif(trim(p_title), '') where id = p_id;
+end;
+$$;
+revoke all on function public.admin_set_title(uuid, text) from public, anon;
+grant execute on function public.admin_set_title(uuid, text) to authenticated;
+
+-- 컨펌 차례 알림: 변호사님께는 "검토 부탁드립니다"
+do $do$ begin
+  if to_regprocedure('public.send_push(uuid[], text, text, text)') is null then return; end if;
+  create or replace function public.push_on_step()
+  returns trigger language plpgsql security definer set search_path = public as $$
+  declare
+    d  public.documents;
+    tt text;
+  begin
+    if new.state = 'current' and (tg_op = 'INSERT' or old.state is distinct from 'current') then
+      select * into d from public.documents where id = new.doc_id;
+      select title into tt from public.profiles where id = new.approver_id;
+      perform public.send_push(array[new.approver_id],
+        case when tt = '변호사' then '⚖️ ' || public.honor(new.approver_id) || ', 검토 부탁드립니다'
+             else '✍️ ' || public.honor(new.approver_id) || ', 컨펌 부탁드립니다' end,
+        coalesce(d.title, '') || coalesce(' · ' || public.honor(d.uploader_id) || ' 요청', ''),
+        'doc.html?id=' || new.doc_id);
+    end if;
+    return new;
+  end;
+  $$;
+end $do$;
+
+-- '컨펌 요청 다시 보내기'도 사람마다 호칭을 붙여서
+do $do$ begin
+  if to_regprocedure('public.notify_users(uuid[], text, text, text)') is null then return; end if;
+  create or replace function public.nudge_doc(p_doc uuid, p_kind text)
+  returns int language plpgsql security definer set search_path = public as $$
+  declare
+    d   public.documents;
+    ids uuid[];
+    u   uuid;
+  begin
+    select * into d from public.documents where id = p_doc for update;
+    if not found or (d.uploader_id <> auth.uid() and not public.is_admin()) then
+      raise exception '올린 사람이나 관리자만 요청할 수 있습니다';
+    end if;
+    if d.nudged_at > now() - interval '10 minutes' then
+      raise exception '방금 요청했습니다. 10분 뒤에 다시 보낼 수 있습니다';
+    end if;
+    if p_kind = 'approvers' then
+      select array_agg(approver_id) into ids from public.approval_steps where doc_id = p_doc and state = 'current';
+      foreach u in array coalesce(ids, '{}') loop
+        perform public.notify_users(array[u],
+          case when (select title from public.profiles where id = u) = '변호사'
+               then '⚖️ ' || public.honor(u) || ', 검토 부탁드립니다' else '⏰ ' || public.honor(u) || ', 컨펌 부탁드립니다' end,
+          d.title || ' · ' || coalesce(public.honor(auth.uid()), '') || '이 기다리고 있습니다' || coalesce(' · 기한 ' || to_char(d.due_date, 'MM/DD'), ''),
+          'doc.html?id=' || p_doc);
+      end loop;
+    else
+      select array_agg(p.id) into ids from public.profiles p
+       where p.active and p.id <> d.uploader_id
+         and not exists (select 1 from public.document_views v where v.doc_id = p_doc and v.user_id = p.id);
+      foreach u in array coalesce(ids, '{}') loop
+        perform public.notify_users(array[u], '👀 ' || public.honor(u) || ', 확인 부탁드립니다',
+          d.title || ' · ' || coalesce(public.honor(auth.uid()), '') || '의 요청', 'doc.html?id=' || p_doc);
+      end loop;
+    end if;
+    update public.documents set nudged_at = now() where id = p_doc;
+    return coalesce(array_length(ids, 1), 0);
+  end;
+  $$;
+end $do$;
