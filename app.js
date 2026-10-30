@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '6.1.1';
+  const APP_VERSION = '6.2.0';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -55,6 +55,7 @@
     if (m.includes('same as the old')) return '기존 비밀번호와 다르게 정해 주세요.';
     if (m.includes('Database error saving new user') || m.includes('초대되지 않은')) return '초대되지 않은 이메일입니다. 관리자에게 등록을 요청하세요.';
     if (m.includes('Token has expired') || m.includes('invalid')) return '인증 코드가 올바르지 않거나 만료되었습니다.';
+    if ((/schema cache|does not exist/.test(m) && /annotation_replies/.test(m)) || /doc_annotations_kind_check/.test(m)) return '고쳐쓰기·답글을 쓰려면 DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/011_fix.sql 을 실행하면 바로 켜집니다.';
     if (/schema cache|does not exist/.test(m) && /doc_annotations|set_avatar|toggle_annotation|avatar|admin_set_title|title/.test(m)) return V6_NOTICE_TEXT;
     if (/schema cache|does not exist/.test(m) && /comment_reactions|attachments|add_approvers|extra_files|create_document_v3|chat_|presence|admin_user_status|leave_|attendance|bookings|resources|clock|nudge_doc|set_doc_due|toggle_comment|storage_usage|offboard|activity_log/.test(m))
       return /leave_|attendance|bookings|resources|clock|nudge_doc|set_doc_due|toggle_comment|storage_usage|offboard|activity_log/.test(m)
@@ -123,7 +124,8 @@
   (() => {
     try {
       const t = localStorage.getItem('intranet_theme');
-      if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+      // 기본은 밝게. '어둡게'를 직접 고른 사람만 어두운 화면 (휴대폰 다크 모드를 따라가지 않음)
+      if (t === 'dark') document.documentElement.dataset.theme = 'dark';
       const fs = localStorage.getItem('intranet_fs');
       if (fs === '1' || fs === '3') document.documentElement.dataset.fs = fs;
     } catch {}
@@ -135,8 +137,8 @@
     }
   })();
   function setTheme(t) {
-    try { t === 'auto' ? localStorage.removeItem('intranet_theme') : localStorage.setItem('intranet_theme', t); } catch {}
-    if (t === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+    try { t === 'dark' ? localStorage.setItem('intranet_theme', 'dark') : localStorage.removeItem('intranet_theme'); } catch {}
+    if (t === 'dark') document.documentElement.dataset.theme = 'dark'; else delete document.documentElement.dataset.theme;
   }
 
   // ----- 아바타 (사진 또는 캐릭터, 없으면 이름 첫 글자) -----
@@ -260,8 +262,8 @@
     const wrap = document.createElement('div');
     wrap.id = 'meDialog';
     wrap.className = 'modal-back';
-    let theme = 'auto';
-    try { theme = localStorage.getItem('intranet_theme') || 'auto'; } catch {}
+    let theme = 'light';
+    try { theme = localStorage.getItem('intranet_theme') === 'dark' ? 'dark' : 'light'; } catch {}
     wrap.innerHTML = `
       <div class="card modal me-modal">
         <div class="me-head"><span id="meAvPreview">${avatar(me, 64)}</span><div><h2>${esc(me.name)}</h2><p class="muted">${esc([me.dept, me.email].filter(Boolean).join(' · '))}</p></div></div>
@@ -274,7 +276,7 @@
         <h3>글자 크기</h3>
         <div class="seg" id="fsSeg">${[['1', '보통'], ['2', '크게'], ['3', '아주 크게']].map(([k, v]) => `<button type="button" data-fs="${k}"${(document.documentElement.dataset.fs || '2') === k ? ' class="on"' : ''}>${v}</button>`).join('')}</div>
         <h3>화면</h3>
-        <div class="seg" id="themeSeg">${[['auto', '자동'], ['light', '밝게'], ['dark', '어둡게']].map(([k, v]) => `<button type="button" data-theme="${k}"${theme === k ? ' class="on"' : ''}>${v}</button>`).join('')}</div>
+        <div class="seg" id="themeSeg">${[['light', '밝게'], ['dark', '어둡게']].map(([k, v]) => `<button type="button" data-theme="${k}"${theme === k ? ' class="on"' : ''}>${v}</button>`).join('')}</div>
         <div class="btn-row">
           <button class="btn ghost" type="button" id="pwOpen">🔑 비밀번호 변경</button>
           <button class="btn" type="button" data-close style="margin-left:auto">닫기</button>
