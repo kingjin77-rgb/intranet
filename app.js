@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '6.2.0';
+  const APP_VERSION = '6.2.1';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -56,7 +56,9 @@
     if (m.includes('Database error saving new user') || m.includes('초대되지 않은')) return '초대되지 않은 이메일입니다. 관리자에게 등록을 요청하세요.';
     if (m.includes('Token has expired') || m.includes('invalid')) return '인증 코드가 올바르지 않거나 만료되었습니다.';
     if ((/schema cache|does not exist/.test(m) && /annotation_replies/.test(m)) || /doc_annotations_kind_check/.test(m)) return '고쳐쓰기·답글을 쓰려면 DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/011_fix.sql 을 실행하면 바로 켜집니다.';
-    if (/schema cache|does not exist/.test(m) && /doc_annotations|set_avatar|toggle_annotation|avatar|admin_set_title|title/.test(m)) return V6_NOTICE_TEXT;
+    if (/schema cache|does not exist|Could not find the function/.test(m) && /set_avatar|avatar/.test(m)) return '아바타 저장은 관리자가 Supabase에서 migrations/010_v6.sql 을 실행한 뒤에 됩니다.';
+    if (/schema cache|does not exist/.test(m) && /admin_set_title|title/.test(m)) return '직함(변호사님 호칭)은 관리자가 Supabase에서 migrations/010_v6.sql 을 실행한 뒤에 됩니다.';
+    if (/schema cache|does not exist/.test(m) && /doc_annotations|toggle_annotation/.test(m)) return V6_NOTICE_TEXT;
     if (/schema cache|does not exist/.test(m) && /comment_reactions|attachments|add_approvers|extra_files|create_document_v3|chat_|presence|admin_user_status|leave_|attendance|bookings|resources|clock|nudge_doc|set_doc_due|toggle_comment|storage_usage|offboard|activity_log/.test(m))
       return /leave_|attendance|bookings|resources|clock|nudge_doc|set_doc_due|toggle_comment|storage_usage|offboard|activity_log/.test(m)
         ? 'DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/008_v5.sql 을 실행하면 바로 됩니다.'
@@ -268,7 +270,8 @@
       <div class="card modal me-modal">
         <div class="me-head"><span id="meAvPreview">${avatar(me, 64)}</span><div><h2>${esc(me.name)}</h2><p class="muted">${esc([me.dept, me.email].filter(Boolean).join(' · '))}</p></div></div>
         <h3>아바타</h3>
-        <div class="av-grid">
+        ${'avatar' in me ? '' : '<div class="notice" style="margin:0 0 8px">⚠️ 아바타 저장은 관리자가 Supabase에서 <b>migrations/010_v6.sql</b> 을 실행한 뒤에 됩니다. 실행 후 화면 위 [업데이트] 또는 새로고침하세요.</div>'}
+        <div class="av-grid${'avatar' in me ? '' : ' av-off'}">
           <label class="av-pick av-photo" title="사진 올리기">📷<span>사진</span><input type="file" id="avFile" accept="image/*" hidden></label>
           ${Object.keys(CHARS).map(k => `<button type="button" class="av-pick${me.avatar === 'char:' + k ? ' on' : ''}" data-char="${k}" title="${k}">${avatar({ id: me.id, name: me.name, avatar: 'char:' + k }, 40)}</button>`).join('')}
           <button type="button" class="av-pick${!me.avatar ? ' on' : ''}" data-char="" title="이름 글자">${avatar({ id: me.id, name: me.name }, 40)}</button>
@@ -299,6 +302,7 @@
       wrap.querySelectorAll('#themeSeg button').forEach(x => x.classList.toggle('on', x === b));
     };
     const save = async (val) => {
+      if (!('avatar' in me)) return toast('아바타 저장은 관리자가 Supabase에서 migrations/010_v6.sql 을 실행한 뒤에 됩니다.', true);
       const { error } = await sb.rpc('set_avatar', { p: val || null });
       if (error) return toast(errMsg(error), true);
       me.avatar = val || null; remember([me]);
@@ -312,6 +316,7 @@
     wrap.querySelector('#avFile').onchange = async (e) => {
       const f = e.target.files[0];
       if (!f) return;
+      if (!('avatar' in me)) return toast('아바타 저장은 관리자가 Supabase에서 migrations/010_v6.sql 을 실행한 뒤에 됩니다.', true);
       try {
         // 정사각형으로 잘라 256px JPEG 로 줄여서 올린다 (원본 사진은 올리지 않음)
         const bmp = await createImageBitmap(f);
