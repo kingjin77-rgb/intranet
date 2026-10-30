@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '6.1.0';
+  const APP_VERSION = '6.1.1';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -124,6 +124,8 @@
     try {
       const t = localStorage.getItem('intranet_theme');
       if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+      const fs = localStorage.getItem('intranet_fs');
+      if (fs === '1' || fs === '3') document.documentElement.dataset.fs = fs;
     } catch {}
     if (!document.querySelector('link[data-font]')) {
       const l = document.createElement('link');
@@ -269,6 +271,8 @@
           ${Object.keys(CHARS).map(k => `<button type="button" class="av-pick${me.avatar === 'char:' + k ? ' on' : ''}" data-char="${k}" title="${k}">${avatar({ id: me.id, name: me.name, avatar: 'char:' + k }, 40)}</button>`).join('')}
           <button type="button" class="av-pick${!me.avatar ? ' on' : ''}" data-char="" title="이름 글자">${avatar({ id: me.id, name: me.name }, 40)}</button>
         </div>
+        <h3>글자 크기</h3>
+        <div class="seg" id="fsSeg">${[['1', '보통'], ['2', '크게'], ['3', '아주 크게']].map(([k, v]) => `<button type="button" data-fs="${k}"${(document.documentElement.dataset.fs || '2') === k ? ' class="on"' : ''}>${v}</button>`).join('')}</div>
         <h3>화면</h3>
         <div class="seg" id="themeSeg">${[['auto', '자동'], ['light', '밝게'], ['dark', '어둡게']].map(([k, v]) => `<button type="button" data-theme="${k}"${theme === k ? ' class="on"' : ''}>${v}</button>`).join('')}</div>
         <div class="btn-row">
@@ -280,6 +284,13 @@
     const close = () => wrap.remove();
     wrap.addEventListener('click', (e) => { if (e.target === wrap || e.target.closest('[data-close]')) close(); });
     wrap.querySelector('#pwOpen').onclick = () => { close(); openPasswordDialog(); };
+    wrap.querySelector('#fsSeg').onclick = (e) => {
+      const b = e.target.closest('[data-fs]'); if (!b) return;
+      if (b.dataset.fs === '2') delete document.documentElement.dataset.fs; else document.documentElement.dataset.fs = b.dataset.fs;
+      try { b.dataset.fs === '2' ? localStorage.removeItem('intranet_fs') : localStorage.setItem('intranet_fs', b.dataset.fs); } catch {}
+      wrap.querySelectorAll('#fsSeg button').forEach(x => x.classList.toggle('on', x === b));
+      window.dispatchEvent(new Event('resize'));
+    };
     wrap.querySelector('#themeSeg').onclick = (e) => {
       const b = e.target.closest('[data-theme]'); if (!b) return;
       setTheme(b.dataset.theme);
