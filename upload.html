@@ -12,10 +12,11 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=6.2.1">
+<link rel="stylesheet" href="style.css?v=6.3.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=6.2.1"></script>
-<script src="app.js?v=6.2.1"></script>
+<script src="config.js?v=6.3.0"></script>
+<script src="app.js?v=6.3.0"></script>
+<script src="video.js?v=6.3.0"></script>
 </head>
 <body>
 <main class="container" style="max-width:640px">
@@ -37,11 +38,11 @@
     <div id="fileSection">
       <label for="file" id="fileLabel">파일 (최대 50MB)</label>
       <div class="drop-zone" id="dropZone">
-        <input type="file" id="file" accept=".pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.hwp,.hwpx,.png,.jpg,.jpeg,.gif,.webp,.zip">
+        <input type="file" id="file" accept=".pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.hwp,.hwpx,.png,.jpg,.jpeg,.gif,.webp,.zip,.mp4,.m4v,.mov,.webm,video/*">
         <span class="muted" id="dropHint">파일을 고르거나 여기에 끌어다 놓으세요</span>
       </div>
       <ul class="file-pick" id="fileList"></ul>
-      <p class="muted" style="margin-top:6px">✅ 바로 보기: PDF, 사진, 워드(.docx), 엑셀(.xlsx) &nbsp;·&nbsp; ⬇️ 다운로드해야 보임: PPT, 한글, ZIP, 옛날 형식(.doc·.xls)</p>
+      <p class="muted" style="margin-top:6px">✅ 바로 보기: PDF, 사진, 워드(.docx), 엑셀(.xlsx), 🎬 영상(50MB 넘으면 자동으로 줄여서 올림) &nbsp;·&nbsp; ⬇️ 다운로드해야 보임: PPT, 한글, ZIP, 옛날 형식(.doc·.xls)</p>
       <div class="notice" id="previewNotice" hidden></div>
     </div>
 
@@ -241,17 +242,21 @@
     if (files[0] && !title.value) title.value = files[0].name.replace(/\.[^.]+$/, '');
     // 미리보기가 안 되는 형식이 있으면 미리 안내
     const notice = document.getElementById('previewNotice');
-    const bad = files.filter(f => !['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'docx', 'xlsx'].includes((f.name.match(/\.([A-Za-z0-9]+)$/) || [, ''])[1].toLowerCase()));
+    const bad = files.filter(f => !['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'docx', 'xlsx', 'mp4', 'm4v', 'mov', 'webm'].includes((f.name.match(/\.([A-Za-z0-9]+)$/) || [, ''])[1].toLowerCase()));
     if (!bad.length) { notice.hidden = true; return; }
     const kinds = [...new Set(bad.map(f => (f.name.match(/\.([A-Za-z0-9]+)$/) || [, ''])[1].toLowerCase().replace(/x$/, '')))];
     notice.innerHTML = `${bad.map(f => esc(f.name)).join(', ')}: <b>미리보기가 안 되고</b> 다운로드해야 볼 수 있습니다. 휴대폰에서는 열리지 않을 수 있어요.`
       + kinds.filter(k => HOW_TO_PDF[k]).map(k => `<br>👉 PDF로 바꿔서 올리면 바로 보입니다: ${HOW_TO_PDF[k]}`).join('');
     notice.hidden = false;
   }
-  function addFiles(list) {
-    for (const f of list) {
+  async function addFiles(list) {
+    for (let f of list) {
       if (!multi) files = [];
       if (files.length >= MAX_FILES) { toast(`파일은 ${MAX_FILES}개까지 올릴 수 있습니다.`, true); break; }
+      // 50MB 넘는 영상은 올리기 전에 이 기기에서 720p로 줄인다
+      if (App.isVideo(f)) {
+        try { f = await App.prepareVideo(f); } catch (err) { toast(`${f.name}: ${err.message}`, true); continue; }
+      }
       if (f.size > MAX) { toast(`${f.name}: 50MB 이하 파일만 올릴 수 있습니다.`, true); continue; }
       // 고르는 순간 복사해 둔다 (고른 뒤 워드에서 다시 저장해도 올라가도록)
       const snap = App.snapshotFile(f);

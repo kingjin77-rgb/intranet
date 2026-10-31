@@ -12,10 +12,11 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=6.2.1">
+<link rel="stylesheet" href="style.css?v=6.3.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=6.2.1"></script>
-<script src="app.js?v=6.2.1"></script>
+<script src="config.js?v=6.3.0"></script>
+<script src="app.js?v=6.3.0"></script>
+<script src="video.js?v=6.3.0"></script>
 </head>
 <body class="chat-page">
 <main class="chat-wrap" id="wrap">
@@ -271,7 +272,8 @@
       const content = m.deleted_at ? '<span class="chat-deleted">삭제된 메시지입니다</span>'
         : `${m.body ? `<div class="chat-text">${fmtBody(m.body)}</div>` : ''}
            ${files.filter(isImage).map(f => `<button type="button" class="chat-img" data-act="img" data-path="${esc(f.path)}" data-name="${esc(f.name)}"><img alt="${esc(f.name)}" data-src="${esc(f.path)}"></button>`).join('')}
-           ${files.filter(f => !isImage(f)).map(f => `<button type="button" class="xc-file" data-act="file" data-path="${esc(f.path)}" data-name="${esc(f.name)}"><span>${fileIcon(f.type, f.name)}</span><span class="nm">${esc(f.name)}</span><span class="sz">${fmtSize(f.size)}</span><span>⬇</span></button>`).join('')}`;
+           ${files.filter(f => App.isVideo(f)).map(f => `<video class="chat-video" controls playsinline preload="metadata" data-vsrc="${esc(f.path)}" title="${esc(f.name)}"></video>`).join('')}
+           ${files.filter(f => !isImage(f) && !App.isVideo(f)).map(f => `<button type="button" class="xc-file" data-act="file" data-path="${esc(f.path)}" data-name="${esc(f.name)}"><span>${fileIcon(f.type, f.name)}</span><span class="nm">${esc(f.name)}</span><span class="sz">${fmtSize(f.size)}</span><span>⬇</span></button>`).join('')}`;
       html += `<div class="msg${mine ? ' mine' : ''}${sameAsPrev ? ' cont' : ''}" data-id="${m.id}">
         ${mine ? '' : `<span class="msg-av">${sameAsPrev ? '' : avatar(m.user_id, true)}</span>`}
         <div class="msg-col">
@@ -287,6 +289,7 @@
     });
     box.innerHTML = html || '<p class="muted chat-first">첫 메시지를 보내 보세요 👋</p>';
     box.querySelectorAll('img[data-src]').forEach(img => signed(img.dataset.src).then(u => (img.src = u)).catch(() => {}));
+    box.querySelectorAll('video[data-vsrc]').forEach(v => signed(v.dataset.vsrc).then(u => { v.src = u; v.removeAttribute('data-vsrc'); }).catch(() => {}));
   }
 
   const urlCache = {};
@@ -379,8 +382,9 @@
     if (b) { pending.splice(+b.dataset.i, 1); renderPending(); }
   };
   async function addFiles(files) {
-    for (const f of files) {
+    for (let f of files) {
       if (pending.length >= 5) { toast('첨부는 5개까지 가능합니다.', true); break; }
+      if (App.isVideo(f)) { try { f = await App.prepareVideo(f); } catch (err) { toast(`${f.name}: ${err.message}`, true); continue; } }
       if (f.size > 50 * 1024 * 1024) { toast(`${f.name}: 50MB 이하만 보낼 수 있습니다.`, true); continue; }
       let copy;
       try { copy = await App.snapshotFile(f); } catch (err) { toast(err.message, true); continue; }

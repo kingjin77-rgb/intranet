@@ -1042,3 +1042,16 @@ table { font-size: calc(14px * var(--fs)); }
 .pv-replyform input { flex: 1; min-width: 0; padding: 7px 10px; font-size: calc(14px * var(--fs)); }
 .pv-pin i, .pv-fix i { white-space: nowrap; }
 .av-grid.av-off { opacity: .45; }
+
+/* v6.3 영상 */
+.pv-videowrap { background: #000; border-radius: 10px; overflow: hidden; display: flex; justify-content: center; }
+.pv-video { display: block; width: 100%; max-height: 75vh; background: #000; }
+#viewerCard.pv-full .pv-videowrap { flex: 1; border-radius: 0; }
+#viewerCard.pv-full .pv-video { max-height: none; height: 100%; }
+.xc-video, .chat-video { display: block; width: 100%; max-width: 420px; max-height: 280px; border-radius: 10px; background: #000; margin-top: 6px; }
+.chat-video { max-width: 280px; }
+.xc-time { border: 0; background: var(--soft); color: var(--primary); border-radius: 6px; padding: 0 6px; font: inherit; font-weight: 700; cursor: pointer; }
+.xc-timebtn { font-size: calc(13px * var(--fs)); font-weight: 700; color: var(--primary); }
+.vid-modal { max-width: 420px; }
+.vid-modal .progress { margin: 10px 0 6px; }
+.vid-bar { height: 100%; background: var(--primary); border-radius: inherit; transition: width .3s; }
