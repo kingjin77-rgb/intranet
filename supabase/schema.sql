@@ -2,7 +2,7 @@
 -- 미니 인트라넷 스키마 (Supabase SQL Editor 에 통째로 붙여넣고 Run)
 --   문서 공유 · 열람기록 · 코멘트 · 순차 결재
 --   여러 번 실행해도 안전하도록 작성됨 (if not exists / or replace)
---   ※ 이 파일을 실행한 뒤 migrations/002_v2.sql → 003_v3.sql → 004_alerts.sql → 005_v33.sql → 006_files.sql → 007_chat.sql → 008_v5.sql → 009_reject.sql → 010_v6.sql → 011_fix.sql 순서로 이어서 실행하세요
+--   ※ 이 파일을 실행한 뒤 migrations/002_v2.sql → 003_v3.sql → 004_alerts.sql → 005_v33.sql → 006_files.sql → 007_chat.sql → 008_v5.sql → 009_reject.sql → 010_v6.sql → 011_fix.sql → 012_alerts.sql 순서로 이어서 실행하세요
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
