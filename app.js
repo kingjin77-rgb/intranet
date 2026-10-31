@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '6.3.0';
+  const APP_VERSION = '6.3.1';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -198,7 +198,7 @@
     header.className = 'topbar';
     header.innerHTML = `
       <div class="topbar-inner">
-        <a class="brand" href="home.html"><span class="brand-logo${cfg.LOGO_URL ? ' has-img' : ''}">${cfg.LOGO_URL ? `<img src="${esc(cfg.LOGO_URL)}" alt="${esc(cfg.COMPANY_NAME || '')} 로고">` : esc((cfg.COMPANY_NAME || 'JL').slice(0, 2))}</span><span class="brand-name">${esc(cfg.COMPANY_NAME || '')} 인트라넷</span></a>
+        <a class="brand" href="home.html"><span class="brand-logo${cfg.LOGO_URL ? ' has-img' : ''}">${cfg.LOGO_URL ? `<img src="${esc(cfg.LOGO_URL)}" alt="${esc(cfg.COMPANY_NAME || '')} 로고">` : esc((cfg.COMPANY_NAME || 'JL').slice(0, 2))}</span><span class="brand-name">${esc(cfg.FIRM_NAME || (cfg.COMPANY_NAME || '') + ' 인트라넷')}${cfg.FIRM_NAME ? '<small>인트라넷</small>' : ''}</span></a>
         ${profile ? '<button class="side-toggle" id="sideToggle" type="button" title="메뉴 접기/펴기" aria-label="메뉴 접기">«</button>' : ''}
         <button class="menu-btn" id="menuBtn" type="button" aria-label="메뉴 열기">☰</button>
         <nav>

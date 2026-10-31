@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="법무법인 제이엘">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1b3a6b"/><stop offset="1" stop-color="#0f2145"/></linearGradient>
+  <linearGradient id="au" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e6c35c"/><stop offset="1" stop-color="#b8901f"/></linearGradient></defs>
+  <rect width="128" height="128" rx="28" fill="url(#g)"/>
+  <rect x="9" y="9" width="110" height="110" rx="21" fill="none" stroke="url(#au)" stroke-width="2" opacity=".55"/>
+  <text x="64" y="80" text-anchor="middle" font-family="'Times New Roman','Liberation Serif',Georgia,serif" font-weight="700" font-size="58" letter-spacing="-2" fill="url(#au)">JL</text>
+  <rect x="38" y="92" width="52" height="3" rx="1.5" fill="url(#au)"/>
+</svg>

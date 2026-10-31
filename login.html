@@ -7,22 +7,22 @@
 <meta property="og:title" content="사내 인트라넷">
 <meta property="og:description" content="제안서·자료 공유, 열람확인, 코멘트, 컨펌">
 <link rel="manifest" href="manifest.webmanifest">
-<meta name="theme-color" content="#1a4f8a">
+<meta name="theme-color" content="#13294b">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=6.3.0">
+<link rel="stylesheet" href="style.css?v=6.3.1">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=6.3.0"></script>
-<script src="app.js?v=6.3.0"></script>
+<script src="config.js?v=6.3.1"></script>
+<script src="app.js?v=6.3.1"></script>
 </head>
 <body>
 <main class="center-wrap">
   <div class="card login-card">
-    <div class="page-title">📁 <span id="company"></span> 인트라넷</div>
+    <div class="login-brand"><img src="icons/logo.svg" alt="" class="login-logo"><div><div class="page-title" id="company"></div><div class="muted">인트라넷</div></div></div>
     <div class="tabs" id="loginTabs" style="margin:12px 0 0">
       <button class="tab active" type="button" data-tab="pw">🔑 비밀번호</button>
       <button class="tab" type="button" data-tab="code">✉️ 이메일 코드</button>
@@ -60,7 +60,7 @@
 <script>
 (async () => {
   const { sb, cfg, toast, errMsg } = App;
-  document.getElementById('company').textContent = cfg.COMPANY_NAME || '';
+  document.getElementById('company').textContent = cfg.FIRM_NAME || cfg.COMPANY_NAME || '';
   if (!sb) {
     document.querySelector('.login-card').insertAdjacentHTML('beforeend',
       '<p class="notice">config.js 에 Supabase 설정을 먼저 입력하세요.</p>');
