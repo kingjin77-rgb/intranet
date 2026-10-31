@@ -14,12 +14,13 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=6.2.1">
+<link rel="stylesheet" href="style.css?v=6.3.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=6.2.1"></script>
-<script src="app.js?v=6.2.1"></script>
-<script src="viewer.js?v=6.2.1"></script>
-<script src="diff.js?v=6.2.1"></script>
+<script src="config.js?v=6.3.0"></script>
+<script src="app.js?v=6.3.0"></script>
+<script src="video.js?v=6.3.0"></script>
+<script src="viewer.js?v=6.3.0"></script>
+<script src="diff.js?v=6.3.0"></script>
 </head>
 <body>
 <main class="container">
@@ -62,6 +63,7 @@
             <div class="xc-tools">
               <label class="xc-tool" id="attachBtn" title="파일·사진 첨부 (5개까지)">📎<input type="file" id="commentFiles" multiple hidden></label>
               <button type="button" class="xc-tool" id="emojiBtn" title="이모지">😊</button>
+              <button type="button" class="xc-tool xc-timebtn" id="timeBtn" title="지금 보는 영상 장면을 코멘트에 넣기" hidden>⏱ 0:00</button>
               <input type="text" class="xc-page" id="pageNo" inputmode="numeric" placeholder="쪽" title="해당 페이지 (선택)">
               <span class="xc-hint" id="dropHint">사진은 붙여넣기(Ctrl+V)·끌어다 놓기도 돼요</span>
               <button class="xc-post" type="submit" id="postBtn">게시</button>
@@ -257,6 +259,9 @@
       }
     } else if (viewUrl && (f.type || '').startsWith('image/')) {
       Viewer.image(viewUrl, f.name, f.path);
+    } else if (viewUrl && App.isVideo(f)) {
+      openBtn.hidden = true;
+      Viewer.video(viewUrl, f.name, f.path, () => noPreview('이 브라우저에서 재생할 수 없는 영상 형식입니다.'));
     } else if (viewUrl && /\.(docx|xlsx)$/.test(lower)) {
       // 워드·엑셀은 이 브라우저 안에서 직접 그린다 (파일이 외부 서버로 나가지 않음)
       openBtn.hidden = true;
@@ -522,16 +527,19 @@
   function fmtBody(t) {
     return esc(t)
       .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
-      .replace(/(^|\s)@([^\s@<]{1,20})/g, '$1<span class="xc-mention">@$2</span>');
+      .replace(/(^|\s)@([^\s@<]{1,20})/g, '$1<span class="xc-mention">@$2</span>')
+      // 영상 시점 [1:23] → 누르면 그 장면으로
+      .replace(/\[(\d{1,3}):([0-5]\d)\]/g, (m, mm, ss) => `<button type="button" class="xc-time" data-act="seek" data-t="${+mm * 60 + +ss}">▶ ${mm}:${ss}</button>`);
   }
   const isImage = (f) => /^image\/(png|jpe?g|gif|webp)$/i.test(f.type || '') || /\.(png|jpe?g|gif|webp)$/i.test(f.name || '');
 
   function renderFiles(c) {
     const files = Array.isArray(c.attachments) ? c.attachments : [];
     if (!files.length) return '';
-    const imgs = files.filter(isImage), others = files.filter(f => !isImage(f));
+    const imgs = files.filter(isImage), vids = files.filter(f => App.isVideo(f)), others = files.filter(f => !isImage(f) && !App.isVideo(f));
     return `${imgs.length ? `<div class="xc-imgs n${Math.min(imgs.length, 4)}">${imgs.map(f =>
       `<button type="button" class="xc-img" data-act="img" data-path="${esc(f.path)}" data-name="${esc(f.name)}"><img alt="${esc(f.name)}" data-src="${esc(f.path)}"></button>`).join('')}</div>` : ''}
+      ${vids.map(f => `<video class="xc-video" controls playsinline preload="metadata" data-vsrc="${esc(f.path)}" title="${esc(f.name)}"></video>`).join('')}
       ${others.map(f => `<button type="button" class="xc-file" data-act="file" data-path="${esc(f.path)}" data-name="${esc(f.name)}">
         <span>${fileIcon(f.type, f.name)}</span><span class="nm">${esc(f.name)}</span><span class="sz">${fmtSize(f.size)}</span><span>⬇</span></button>`).join('')}`;
   }
@@ -609,6 +617,7 @@
     box.querySelectorAll('img[data-src]').forEach(img => {
       signed(img.dataset.src).then(u => (img.src = u)).catch(() => (img.alt = '⚠️ ' + img.alt));
     });
+    box.querySelectorAll('video[data-vsrc]').forEach(v => signed(v.dataset.vsrc).then(u => { v.src = u; v.removeAttribute('data-vsrc'); }).catch(() => {}));
   }
 
   function lightbox(src, name) {
@@ -652,6 +661,8 @@
           : await sb.from('comment_reactions').insert({ comment_id: cid, user_id: me.id, emoji });
         if (error) return toast(errMsg(error), true);
         loadComments();
+      } else if (act === 'seek') {
+        Viewer.seek(+b.dataset.t);
       } else if (act === 'img') {
         lightbox(await signed(b.dataset.path), b.dataset.name);
       } else if (act === 'file') {
@@ -695,8 +706,9 @@
   };
   async function addFiles(files) {
     if (!(await hasV33)) return;
-    for (const f of files) {
+    for (let f of files) {
       if (pending.length >= MAX_FILES) { toast(`첨부는 ${MAX_FILES}개까지 가능합니다.`, true); break; }
+      if (App.isVideo(f)) { try { f = await App.prepareVideo(f); } catch (err) { toast(`${f.name}: ${err.message}`, true); continue; } }
       if (f.size > MAX_FILE) { toast(`${f.name}: 50MB 이하만 올릴 수 있습니다.`, true); continue; }
       // 붙여넣은 캡처는 이름이 image.png 로 오므로 시간을 붙여 구분
       let copy;
@@ -821,6 +833,23 @@
   // 한 카드가 실패해도 나머지는 그려지도록 따로 기다린다
   loadVersions().catch(e => console.warn(e));
   Viewer.start();
+
+  // ⏱ 영상 장면 코멘트: 지금 재생 시점을 [m:ss] 로 넣는다
+  const timeBtn = document.getElementById('timeBtn');
+  setInterval(() => {
+    const v = Viewer.currentVideo();
+    timeBtn.hidden = !v;
+    if (v) timeBtn.textContent = `⏱ ${App.fmtT(v.currentTime)}`;
+  }, 500);
+  timeBtn.onclick = () => {
+    const v = Viewer.currentVideo(); if (!v) return;
+    v.pause();
+    const ta = document.getElementById('commentBody'), tag = `[${App.fmtT(v.currentTime)}] `;
+    const at = ta.selectionStart ?? ta.value.length;
+    ta.value = ta.value.slice(0, at) + tag + ta.value.slice(at);
+    ta.focus(); ta.selectionStart = ta.selectionEnd = at + tag.length;
+    ta.dispatchEvent(new Event('input'));
+  };
 
   // ----- 첨삭 목록: 밑줄·메모·도장은 '고침 체크'를 할 수 있다 -----
   var markFilter = 'all';  // var: 뷰어가 먼저 그려질 때도 참조할 수 있게

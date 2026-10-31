@@ -272,6 +272,21 @@
     attach([{ el: host.querySelector('.pv-page'), num: 1 }]);
   }
 
+  // 영상: 브라우저 기본 플레이어 (전체화면·넓게 보기 툴바 그대로)
+  function video(url, name, path, onFail) {
+    reset(path);
+    host.innerHTML = `<div class="pv-videowrap"><video class="pv-video" controls playsinline preload="metadata" src="${esc(url)}" title="${esc(name)}"></video></div>`;
+    const v = host.querySelector('video');
+    v.onerror = () => onFail && onFail();
+  }
+  const currentVideo = () => (host && host.querySelector('video.pv-video')) || null;
+  function seek(t) {
+    const v = currentVideo(); if (!v) return;
+    v.currentTime = t;
+    v.play().catch(() => {});
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   // 엑셀·양식·미리보기 없는 파일: 전체화면·넓게 보기만
   function plain(path) { reset(path); }
 
@@ -703,7 +718,7 @@
   }
 
   window.Viewer = {
-    init, start, reload: () => fetchAnns(), openPop, get replies() { return replies; }, get hasReplies() { return hasReplies; }, pdf, docxPages, image, plain, focus, toggleCheck, canCheck, remove,
+    init, start, video, seek, currentVideo, reload: () => fetchAnns(), openPop, get replies() { return replies; }, get hasReplies() { return hasReplies; }, pdf, docxPages, image, plain, focus, toggleCheck, canCheck, remove,
     get anns() { return anns; },
     STAMPS, KIND_LABEL, loadPdfJs, pagesInfo: () => pages, get current() { return current; }, get filePath() { return filePath; }, scroller: () => scroller(), buildToolbar: () => buildToolbar(),
   };
