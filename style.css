@@ -1055,3 +1055,11 @@ table { font-size: calc(14px * var(--fs)); }
 .vid-modal { max-width: 420px; }
 .vid-modal .progress { margin: 10px 0 6px; }
 .vid-bar { height: 100%; background: var(--primary); border-radius: inherit; transition: width .3s; }
+
+/* 로고 (법무법인 제이엘) */
+.brand-name { display: flex; flex-direction: column; line-height: 1.15; }
+.brand-name small { font-size: calc(11px * var(--fs)); font-weight: 600; color: var(--text-muted); letter-spacing: 0; }
+.brand-logo.has-img { border-radius: 9px; box-shadow: 0 2px 6px rgba(15, 33, 69, .25); }
+.login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.login-logo { width: 52px; height: 52px; border-radius: 13px; box-shadow: 0 4px 12px rgba(15, 33, 69, .25); }
+.login-brand .page-title { margin: 0; }

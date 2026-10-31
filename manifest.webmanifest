@@ -1,5 +1,5 @@
 {
-  "name": "제이엘 인트라넷",
+  "name": "법무법인 제이엘 인트라넷",
   "short_name": "인트라넷",
   "description": "사건·문서·컨펌·업무·일정·상담·공지를 한곳에서",
   "lang": "ko",
@@ -8,7 +8,7 @@
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "theme_color": "#1a4f8a",
+  "theme_color": "#13294b",
   "background_color": "#f0f4f9",
   "icons": [
     {
