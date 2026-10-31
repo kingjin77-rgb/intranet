@@ -792,6 +792,7 @@ span.df-del:not(.df-pin) { color: #dc2626; font-size: .8em; cursor: help; vertic
 @media (max-width: 1023px) {
   .topbar-inner { justify-content: space-between; }
   .menu-btn { order: 3; }
+  .me-quick { order: 2; margin-left: auto; }
   .topbar nav { position: fixed; z-index: 60; top: 0; bottom: 0; right: 0; width: min(300px, 86vw); background: var(--surface); padding: calc(16px + env(safe-area-inset-top)) 12px 16px;
     box-shadow: var(--shadow-lg); transform: translateX(105%); transition: transform .25s ease; overflow-y: auto; }
   body.nav-open .topbar nav { transform: none; }
@@ -1070,3 +1071,15 @@ table { font-size: calc(14px * var(--fs)); }
 .login-logo { width: 52px; height: 52px; border-radius: 13px; box-shadow: 0 4px 12px rgba(15, 33, 69, .25); }
 .login-brand .page-title { margin: 0; }
 @media (min-width: 1024px) { .nav-close { display: none !important; } }
+
+/* v6.3.3 내 아바타 바로가기: 휴대폰 위쪽 바 · 홈 인사말 · 처음 안내 띠 */
+.me-quick { display: none; border: 0; background: none; padding: 2px; border-radius: 50%; cursor: pointer; line-height: 0; }
+.me-quick:focus-visible, .hello-av:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+@media (max-width: 1023px) { .me-quick { display: inline-block; } }
+.hello-row { display: flex; align-items: center; gap: 14px; }
+.hello-av { border: 0; background: none; padding: 0; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--text-3, var(--text-2)); }
+.hello-av small { font-size: calc(11px * var(--fs)); white-space: nowrap; }
+.hello-av:hover small { color: var(--primary); }
+.av-banner { display: flex; align-items: center; gap: 10px; padding: 12px 14px; margin-bottom: 12px; border-radius: 12px; background: var(--soft); border: 1px solid var(--border); font-weight: 600; }
+.av-banner .btn { margin-left: auto; }
+.av-banner .x { border: 0; background: none; font-size: calc(16px * var(--fs)); cursor: pointer; color: var(--text-2); padding: 4px 6px; }

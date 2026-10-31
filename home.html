@@ -12,17 +12,21 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=6.3.2">
+<link rel="stylesheet" href="style.css?v=6.3.3">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=6.3.2"></script>
-<script src="app.js?v=6.3.2"></script>
+<script src="config.js?v=6.3.3"></script>
+<script src="app.js?v=6.3.3"></script>
 </head>
 <body>
 <main class="container">
+  <div class="av-banner" id="avBanner" hidden>🦊 나만의 아바타를 골라보세요 <button class="btn sm" type="button" id="avBannerGo">고르기</button><button class="x" type="button" id="avBannerX" aria-label="닫기">✕</button></div>
   <div class="home-hello">
-    <div>
-      <div class="page-title" id="hello">안녕하세요</div>
-      <p class="muted" id="today"></p>
+    <div class="hello-row">
+      <button class="hello-av" type="button" id="helloAv" title="아바타 바꾸기" hidden></button>
+      <div>
+        <div class="page-title" id="hello">안녕하세요</div>
+        <p class="muted" id="today"></p>
+      </div>
     </div>
     <div class="quick">
       <button class="btn sm clock-quick" id="clockQuick" hidden></button>
@@ -77,6 +81,22 @@
   const me = await App.requireAuth();
   const now = new Date();
   document.getElementById('hello').textContent = `안녕하세요, ${me.name}님`;
+  // 내 아바타: 누르면 내 정보(아바타 고르기) 창
+  const hAv = document.getElementById('helloAv');
+  hAv.innerHTML = `${App.avatar(me.id, 56, 'me-av')}<small>✏️ 아바타 바꾸기</small>`;
+  hAv.hidden = false;
+  hAv.onclick = () => App.openProfile();
+  App.signAvatars([me]).then(() => { const el = hAv.querySelector('.me-av'); if (el) el.outerHTML = App.avatar(me.id, 56, 'me-av'); });
+  // 아직 아바타를 안 고른 사람에게 한 번만 안내 (010 실행 전에는 안 보임)
+  let avSeen = false;
+  try { avSeen = !!localStorage.getItem('av_banner_seen'); } catch {}
+  if ('avatar' in me && !me.avatar && !avSeen) {
+    const bn = document.getElementById('avBanner');
+    const done = () => { bn.hidden = true; try { localStorage.setItem('av_banner_seen', '1'); } catch {} };
+    bn.hidden = false;
+    document.getElementById('avBannerGo').onclick = () => { done(); App.openProfile(); };
+    document.getElementById('avBannerX').onclick = done;
+  }
   document.getElementById('today').textContent = now.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
   const [v2, v3] = await Promise.all([App.hasV2(), App.hasV3()]);
   const empty = (msg) => `<li class="empty-li">${msg}</li>`;

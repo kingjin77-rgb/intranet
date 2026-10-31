@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '6.3.2';
+  const APP_VERSION = '6.3.3';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -189,8 +189,9 @@
     ['tasks.html', '📌', '업무'], ['calendar.html', '📅', '일정'], ['consults.html', '📞', '상담'], ['notices.html', '📢', '공지'],
     ['library.html', '📁', '자료실'], ['office.html', '🕘', '근태·예약'],
   ];
+  let myProfile = null;
   function renderHeader(profile) {
-    if (profile) remember([profile]);
+    if (profile) { remember([profile]); myProfile = profile; }
     const here = location.pathname.split('/').pop() || 'index.html';
     const link = ([href, icon, label, k]) => `<a href="${href}" class="${[k === 'chat' && 'nav-chat', here === href && 'on'].filter(Boolean).join(' ')}"${here === href ? ' aria-current="page"' : ''}>
         <i>${icon}</i><span>${label}</span>${k === 'chat' ? '<span class="nav-badge chat-badge" id="chatBadge" hidden></span>' : ''}</a>`;
@@ -200,6 +201,7 @@
       <div class="topbar-inner">
         <a class="brand" href="home.html"><span class="brand-logo${cfg.LOGO_URL ? ' has-img' : ''}">${cfg.LOGO_URL ? `<img src="${esc(cfg.LOGO_URL)}" alt="${esc(cfg.COMPANY_NAME || '')} 로고">` : esc((cfg.COMPANY_NAME || 'JL').slice(0, 2))}</span><span class="brand-name">${esc(cfg.FIRM_NAME || (cfg.COMPANY_NAME || '') + ' 인트라넷')}${cfg.FIRM_NAME ? '<small>인트라넷</small>' : ''}</span></a>
         ${profile ? '<button class="side-toggle" id="sideToggle" type="button" title="메뉴 접기/펴기" aria-label="메뉴 접기">«</button>' : ''}
+        ${profile ? `<button class="me-quick" id="meQuick" type="button" aria-label="내 정보 · 아바타" title="내 정보 · 아바타">${avatar(profile, 34, 'me-av')}</button>` : ''}
         <button class="menu-btn" id="menuBtn" type="button" aria-label="메뉴 열기">☰</button>
         <nav>
           <button type="button" class="nav-close" id="navClose" aria-label="메뉴 닫기">✕</button>
@@ -257,8 +259,11 @@
     const mb = header.querySelector('#meBtn');
     if (mb) {
       mb.onclick = () => openProfileDialog(profile);
+      // 휴대폰 위쪽 바의 내 아바타도 같은 창을 연다
+      const mq = header.querySelector('#meQuick');
+      if (mq) mq.onclick = () => openProfileDialog(profile);
       // 내 사진 아바타는 서명 URL 을 받은 뒤 바꿔 끼운다
-      signAvatars([profile]).then(() => { const el = mb.querySelector('.me-av'); if (el) el.outerHTML = avatar(profile.id, 28, 'me-av'); });
+      signAvatars([profile]).then(() => refreshMyAvatars(profile.id));
     }
     const nb = header.querySelector('#notifyBtn');
     if (nb) nb.onclick = async () => {
@@ -267,6 +272,11 @@
       if (r === 'granted') subscribePush(profile).catch(e => console.warn('푸시 등록 실패', e));
       toast(r === 'granted' ? '알림을 켰습니다. 새 문서·코멘트·열람 확인·컨펌을 알려드려요.' : '알림이 꺼져 있습니다. 브라우저 설정에서 켤 수 있어요.', r !== 'granted');
     };
+  }
+
+  // 화면 곳곳의 '내 아바타'(.me-av)를 크기는 그대로 두고 새 모양으로
+  function refreshMyAvatars(uid) {
+    document.querySelectorAll('.me-av').forEach(el => { el.outerHTML = avatar(uid, parseInt(el.style.width, 10) || 28, 'me-av'); });
   }
 
   // ----- 내 정보: 아바타(사진·캐릭터) · 화면 테마 · 비밀번호 -----
@@ -321,7 +331,7 @@
       await signAvatars([me]);
       wrap.querySelector('#meAvPreview').innerHTML = avatar(me, 64);
       wrap.querySelectorAll('.av-pick[data-char]').forEach(b => b.classList.toggle('on', (b.dataset.char ? 'char:' + b.dataset.char : '') === (val || '')));
-      document.querySelectorAll('.me-av').forEach(el => (el.outerHTML = avatar(me, 28, 'me-av')));
+      refreshMyAvatars(me.id);
       toast('아바타를 바꿨습니다.');
     };
     wrap.querySelectorAll('.av-pick[data-char]').forEach(b => (b.onclick = () => save(b.dataset.char ? 'char:' + b.dataset.char : '')));
@@ -893,5 +903,5 @@
     (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
   }
 
-  window.App = { honor, avatar, avColor, people, remember, signAvatars, sendMail, setTheme, hasV6, V6_NOTICE_TEXT, saveFile, dueBadge, hasV5, V5_NOTICE, logActivity, attachMention, hasV4, V4_NOTICE, refreshChatBadge: () => refreshChat(), snapshotFile, uploadFile, sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, hasV3, V3_NOTICE, TASK_STATUS, CONSULT_STATUS, ymdLocal, ddayDate, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
+  window.App = { openProfile: () => myProfile && openProfileDialog(myProfile), honor, avatar, avColor, people, remember, signAvatars, sendMail, setTheme, hasV6, V6_NOTICE_TEXT, saveFile, dueBadge, hasV5, V5_NOTICE, logActivity, attachMention, hasV4, V4_NOTICE, refreshChatBadge: () => refreshChat(), snapshotFile, uploadFile, sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, hasV3, V3_NOTICE, TASK_STATUS, CONSULT_STATUS, ymdLocal, ddayDate, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
 })();
