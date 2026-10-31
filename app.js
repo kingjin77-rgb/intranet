@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '6.3.3';
+  const APP_VERSION = '6.4.0';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -55,6 +55,7 @@
     if (m.includes('same as the old')) return '기존 비밀번호와 다르게 정해 주세요.';
     if (m.includes('Database error saving new user') || m.includes('초대되지 않은')) return '초대되지 않은 이메일입니다. 관리자에게 등록을 요청하세요.';
     if (m.includes('Token has expired') || m.includes('invalid')) return '인증 코드가 올바르지 않거나 만료되었습니다.';
+    if (/schema cache|does not exist|Could not find the function/.test(m) && /notifications|send_test_push/.test(m)) return '알림함·시험 알림은 관리자가 Supabase에서 migrations/012_alerts.sql 을 실행한 뒤에 됩니다.';
     if ((/schema cache|does not exist/.test(m) && /annotation_replies/.test(m)) || /doc_annotations_kind_check/.test(m)) return '고쳐쓰기·답글을 쓰려면 DB 업데이트가 필요합니다. 관리자가 Supabase에서 migrations/011_fix.sql 을 실행하면 바로 켜집니다.';
     if (/schema cache|does not exist|Could not find the function/.test(m) && /set_avatar|avatar/.test(m)) return '아바타 저장은 관리자가 Supabase에서 migrations/010_v6.sql 을 실행한 뒤에 됩니다.';
     if (/schema cache|does not exist/.test(m) && /admin_set_title|title/.test(m)) return '직함(변호사님 호칭)은 관리자가 Supabase에서 migrations/010_v6.sql 을 실행한 뒤에 됩니다.';
@@ -201,6 +202,7 @@
       <div class="topbar-inner">
         <a class="brand" href="home.html"><span class="brand-logo${cfg.LOGO_URL ? ' has-img' : ''}">${cfg.LOGO_URL ? `<img src="${esc(cfg.LOGO_URL)}" alt="${esc(cfg.COMPANY_NAME || '')} 로고">` : esc((cfg.COMPANY_NAME || 'JL').slice(0, 2))}</span><span class="brand-name">${esc(cfg.FIRM_NAME || (cfg.COMPANY_NAME || '') + ' 인트라넷')}${cfg.FIRM_NAME ? '<small>인트라넷</small>' : ''}</span></a>
         ${profile ? '<button class="side-toggle" id="sideToggle" type="button" title="메뉴 접기/펴기" aria-label="메뉴 접기">«</button>' : ''}
+        ${profile ? '<button class="bell-quick" id="bellQuick" type="button" aria-label="알림함" title="알림함">🔔<b class="bell-badge" hidden></b></button>' : ''}
         ${profile ? `<button class="me-quick" id="meQuick" type="button" aria-label="내 정보 · 아바타" title="내 정보 · 아바타">${avatar(profile, 34, 'me-av')}</button>` : ''}
         <button class="menu-btn" id="menuBtn" type="button" aria-label="메뉴 열기">☰</button>
         <nav>
@@ -214,7 +216,7 @@
           <a href="search.html" title="통합 검색"${here === 'search.html' ? ' class="on"' : ''}><i>🔍</i><span>검색</span></a>
           <a href="help.html" title="PC·휴대폰 설치 안내"${here === 'help.html' ? ' class="on"' : ''}><i>❓</i><span>설치</span></a>
           <div class="nav-foot">
-            ${profile && 'Notification' in window && Notification.permission === 'default' ? '<button id="notifyBtn" type="button"><i>🔔</i><span>알림 켜기</span></button>' : ''}
+            ${profile ? '<button id="bellBtn" type="button" title="알림함 · 알림 켜기"><i>🔔</i><span>알림</span><span class="nav-badge bell-badge" hidden></span></button>' : ''}
             ${profile ? `<button id="meBtn" type="button" title="내 정보 · 아바타 · 비밀번호">${avatar(profile, 28, 'me-av')}<span>${esc(profile.name)}</span></button><button id="logoutBtn" type="button"><i>↪</i><span>로그아웃</span></button>` : ''}
           </div>
         </nav>
@@ -265,12 +267,159 @@
       // 내 사진 아바타는 서명 URL 을 받은 뒤 바꿔 끼운다
       signAvatars([profile]).then(() => refreshMyAvatars(profile.id));
     }
-    const nb = header.querySelector('#notifyBtn');
-    if (nb) nb.onclick = async () => {
-      const r = await Notification.requestPermission();
-      nb.remove();
-      if (r === 'granted') subscribePush(profile).catch(e => console.warn('푸시 등록 실패', e));
-      toast(r === 'granted' ? '알림을 켰습니다. 새 문서·코멘트·열람 확인·컨펌을 알려드려요.' : '알림이 꺼져 있습니다. 브라우저 설정에서 켤 수 있어요.', r !== 'granted');
+    header.querySelectorAll('#bellBtn, #bellQuick').forEach(b => (b.onclick = () => openInbox(profile)));
+  }
+
+  // =====================================================================
+  // 알림 (v6.4): 이 기기 알림 상태 · 켜기 안내 · 🔔 알림함
+  // =====================================================================
+  const onIOS = () => /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const inApp = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  // on: 켜짐 · ask: 아직 안 물어봄 · denied: 막힘 · ios-install: 아이폰은 홈 화면 설치 필요 · unsupported
+  async function alertState() {
+    if (onIOS() && !inApp()) return 'ios-install';
+    if (!('Notification' in window)) return 'unsupported';
+    if (Notification.permission === 'denied') return 'denied';
+    if (Notification.permission !== 'granted') return 'ask';
+    try {
+      const reg = cfg.VAPID_PUBLIC_KEY && 'serviceWorker' in navigator && await navigator.serviceWorker.getRegistration();
+      if (reg && 'PushManager' in window && !(await reg.pushManager.getSubscription())) return 'ask';
+    } catch {}
+    return 'on';
+  }
+  const ALERT_HELP = {
+    'ios-install': `<p>아이폰은 <b>홈 화면에 설치한 인트라넷 앱</b>에서만 알림이 옵니다.</p>
+      <ol class="how-steps"><li>사파리 아래쪽 <b>공유 버튼</b>(□↑)을 누르기</li><li><b>홈 화면에 추가</b> → 추가</li><li>홈 화면의 <b>인트라넷</b> 아이콘으로 열고 로그인</li><li>🔔 <b>알림 켜기</b> → 허용</li></ol>`,
+    denied: `<p>이 기기에서 알림이 <b>차단</b>돼 있어요. 아래처럼 허용으로 바꿔 주세요.</p>
+      <ul class="how-steps"><li><b>PC 크롬·엣지</b>: 주소창 왼쪽 🔒(또는 ⚙) → 알림 → <b>허용</b> → 새로고침</li>
+      <li><b>안드로이드</b>: 휴대폰 설정 → 애플리케이션 → 인트라넷(또는 Chrome) → 알림 → <b>허용</b></li>
+      <li><b>아이폰</b>: 설정 → 알림 → 인트라넷 → <b>알림 허용</b></li></ul>`,
+    unsupported: '<p>이 브라우저는 알림을 지원하지 않습니다. 크롬이나 휴대폰 앱(홈 화면 설치)으로 열어 주세요.</p>',
+  };
+  const ALERT_LABEL = { on: '✅ 이 기기 알림 켜짐', ask: '🔕 이 기기 알림 꺼짐', denied: '🚫 이 기기 알림 차단됨', 'ios-install': '📲 홈 화면에 설치해야 알림이 옵니다', unsupported: '🔕 알림 지원 안 됨' };
+
+  async function enableAlerts(profile) {
+    const r = await Notification.requestPermission();
+    if (r !== 'granted') { toast('알림이 허용되지 않았습니다. 아래 안내대로 허용해 주세요.', true); return false; }
+    try { await subscribePush(profile); } catch (e) { console.warn('푸시 등록 실패', e); }
+    toast('🔔 알림을 켰습니다. 컨펌 요청·업무 지시를 바로 알려드려요.');
+    refreshBellDot();
+    return true;
+  }
+  async function testAlert() {
+    const { data, error } = await sb.rpc('send_test_push');
+    if (error) return toast(errMsg(error), true);
+    toast(data ? '시험 알림을 보냈습니다. 몇 초 안에 이 기기에 알림이 오면 정상입니다.' : '이 기기가 아직 등록되지 않았습니다. [알림 켜기]를 먼저 눌러 주세요.', !data);
+  }
+
+  // 로그인할 때: 알림이 꺼져 있으면 크게 안내 ('나중에'는 하루 동안 안 물어봄)
+  async function maybeAskAlerts(profile) {
+    const st = await alertState();
+    refreshBellDot(st);
+    if (st === 'on' || st === 'unsupported') return;
+    try { if (+localStorage.getItem('alert_snooze') > Date.now()) return; } catch {}
+    if (document.querySelector('.modal-back')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-back';
+    wrap.id = 'alertAsk';
+    wrap.innerHTML = `<div class="card modal alert-ask">
+      <div class="alert-ring">🔔</div>
+      <h2>${esc(honor(profile))}, 알림을 켜 주세요</h2>
+      <p class="muted">컨펌 요청·업무 지시·코멘트가 오면 <b>휴대폰이 잠겨 있어도</b> 바로 알려드립니다. 알림이 꺼져 있으면 요청이 와도 모르고 지나갑니다.</p>
+      ${st === 'ask' ? '' : ALERT_HELP[st]}
+      <div class="btn-row">
+        ${st === 'ask' ? '<button class="btn" type="button" data-on>🔔 알림 켜기</button>' : ''}
+        <button class="btn ghost" type="button" data-later>나중에</button>
+      </div></div>`;
+    document.body.appendChild(wrap);
+    const later = () => { try { localStorage.setItem('alert_snooze', String(Date.now() + 864e5)); } catch {} wrap.remove(); };
+    wrap.querySelector('[data-later]').onclick = later;
+    wrap.addEventListener('click', (e) => { if (e.target === wrap) later(); });
+    const on = wrap.querySelector('[data-on]');
+    if (on) on.onclick = async () => { if (await enableAlerts(profile)) wrap.remove(); };
+  }
+
+  // 🔔 에 빨간 점: 알림이 꺼진 기기 / 숫자: 안 읽은 알림
+  let bellUnread = 0, bellOff = false;
+  async function refreshBellDot(st) {
+    bellOff = (st || await alertState()) !== 'on';
+    paintBell();
+  }
+  function paintBell() {
+    document.querySelectorAll('.bell-badge').forEach(el => {
+      el.textContent = bellUnread ? (bellUnread > 99 ? '99+' : bellUnread) : (bellOff ? '!' : '');
+      el.hidden = !bellUnread && !bellOff;
+      el.classList.toggle('warn', !bellUnread && bellOff);
+    });
+  }
+  let _hasV64;
+  function hasV64() {
+    if (_hasV64 === undefined) _hasV64 = sb.from('notifications').select('id').limit(1).then(({ data, error }) => !error && Array.isArray(data));
+    return _hasV64;
+  }
+  async function refreshInbox() {
+    if (!(await hasV64())) return;
+    const { count } = await sb.from('notifications').select('id', { count: 'exact', head: true }).is('read_at', null);
+    bellUnread = count || 0;
+    paintBell();
+  }
+  function watchInbox(me) {
+    hasV64().then(ok => {
+      if (!ok) return;
+      refreshInbox();
+      sb.channel('noti-' + me.id).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: 'user_id=eq.' + me.id }, ({ new: n }) => {
+        bellUnread++; paintBell();
+        if (document.visibilityState === 'visible' && !n.url?.startsWith(location.pathname.split('/').pop() + '?')) toast('🔔 ' + n.title);
+        const box = document.getElementById('inboxList');
+        if (box) box.prepend(inboxItem(n));
+      }).subscribe();
+    });
+  }
+  function inboxItem(n) {
+    const li = document.createElement('li');
+    li.className = 'inbox-item' + (n.read_at ? '' : ' unread');
+    li.dataset.id = n.id;
+    li.innerHTML = `<b>${esc(n.title)}</b>${n.body ? `<span>${esc(n.body)}</span>` : ''}<time>${esc(fmtDate(n.created_at))}</time>`;
+    li.onclick = async () => {
+      if (!n.read_at) await sb.rpc('read_notifications', { p_ids: [n.id] });
+      if (n.url) location.href = n.url; else { li.classList.remove('unread'); refreshInbox(); }
+    };
+    return li;
+  }
+  async function openInbox(profile) {
+    if (document.getElementById('inboxDialog')) return;
+    const st = await alertState();
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-back';
+    wrap.id = 'inboxDialog';
+    wrap.innerHTML = `<div class="card modal inbox-modal">
+      <div class="inbox-head"><h2>🔔 알림</h2><button class="btn ghost sm" type="button" id="inboxAll">모두 읽음</button><button class="x" type="button" data-close aria-label="닫기">✕</button></div>
+      <div class="alert-status ${st === 'on' ? 'ok' : 'off'}"><span>${ALERT_LABEL[st]}</span>
+        ${st === 'ask' ? '<button class="btn sm" type="button" id="alertOn">🔔 알림 켜기</button>' : ''}
+        ${st === 'on' ? '<button class="btn ghost sm" type="button" id="alertTest">시험 보내기</button>' : ''}</div>
+      ${ALERT_HELP[st] ? `<div class="alert-help">${ALERT_HELP[st]}</div>` : ''}
+      <ul class="inbox-list" id="inboxList"><li class="muted">불러오는 중…</li></ul></div>`;
+    document.body.appendChild(wrap);
+    const close = () => wrap.remove();
+    wrap.addEventListener('click', (e) => { if (e.target === wrap || e.target.closest('[data-close]')) close(); });
+    const on = wrap.querySelector('#alertOn');
+    if (on) on.onclick = async () => { if (await enableAlerts(profile)) { close(); openInbox(profile); } };
+    const t = wrap.querySelector('#alertTest');
+    if (t) t.onclick = testAlert;
+    const list = wrap.querySelector('#inboxList');
+    if (!(await hasV64())) {
+      list.innerHTML = '<li class="notice">알림함은 관리자가 Supabase에서 <b>migrations/012_alerts.sql</b> 을 실행한 뒤에 보입니다.</li>';
+      wrap.querySelector('#inboxAll').hidden = true;
+      return;
+    }
+    const { data, error } = await sb.from('notifications').select('*').order('created_at', { ascending: false }).limit(50);
+    if (error) { list.innerHTML = `<li class="notice">${esc(errMsg(error))}</li>`; return; }
+    list.innerHTML = data.length ? '' : '<li class="muted empty-li">아직 받은 알림이 없습니다.</li>';
+    data.forEach(n => list.appendChild(inboxItem(n)));
+    wrap.querySelector('#inboxAll').onclick = async () => {
+      await sb.rpc('read_notifications', { p_ids: null });
+      list.querySelectorAll('.unread').forEach(li => li.classList.remove('unread'));
+      bellUnread = 0; paintBell();
     };
   }
 
@@ -646,6 +795,8 @@
     }
     renderHeader(profile);
     startWatch(profile);
+    watchInbox(profile);
+    setTimeout(() => maybeAskAlerts(profile).catch(() => {}), 1200);
     // 알림을 이미 허용한 기기는 조용히 푸시 구독을 맞춰 둔다
     if ('Notification' in window && Notification.permission === 'granted') subscribePush(profile).catch(() => {});
     try {
@@ -903,5 +1054,5 @@
     (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
   }
 
-  window.App = { openProfile: () => myProfile && openProfileDialog(myProfile), honor, avatar, avColor, people, remember, signAvatars, sendMail, setTheme, hasV6, V6_NOTICE_TEXT, saveFile, dueBadge, hasV5, V5_NOTICE, logActivity, attachMention, hasV4, V4_NOTICE, refreshChatBadge: () => refreshChat(), snapshotFile, uploadFile, sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, hasV3, V3_NOTICE, TASK_STATUS, CONSULT_STATUS, ymdLocal, ddayDate, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
+  window.App = { openInbox: () => myProfile && openInbox(myProfile), alertState, hasV64, openProfile: () => myProfile && openProfileDialog(myProfile), honor, avatar, avColor, people, remember, signAvatars, sendMail, setTheme, hasV6, V6_NOTICE_TEXT, saveFile, dueBadge, hasV5, V5_NOTICE, logActivity, attachMention, hasV4, V4_NOTICE, refreshChatBadge: () => refreshChat(), snapshotFile, uploadFile, sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, hasV3, V3_NOTICE, TASK_STATUS, CONSULT_STATUS, ymdLocal, ddayDate, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
 })();
