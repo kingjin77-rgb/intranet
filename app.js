@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '6.3.1';
+  const APP_VERSION = '6.3.2';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -202,6 +202,7 @@
         ${profile ? '<button class="side-toggle" id="sideToggle" type="button" title="메뉴 접기/펴기" aria-label="메뉴 접기">«</button>' : ''}
         <button class="menu-btn" id="menuBtn" type="button" aria-label="메뉴 열기">☰</button>
         <nav>
+          <button type="button" class="nav-close" id="navClose" aria-label="메뉴 닫기">✕</button>
           <a href="upload.html" class="nav-cta${here === 'upload.html' ? ' on' : ''}"><i>＋</i><span>문서 올리기</span></a>
           ${NAV.map(n => link(n) + (n[0] === 'index.html' ? `
           <a href="index.html?tab=myturn" class="nav-sub"><i>✍️</i><span>내 컨펌 대기</span><span class="nav-badge turn-badge" hidden></span></a>
@@ -228,8 +229,19 @@
       document.body.appendChild(tb);
     }
     const menu = header.querySelector('#menuBtn');
-    menu.onclick = () => document.body.classList.toggle('nav-open');
-    header.querySelector('nav').addEventListener('click', (e) => { if (e.target.closest('a')) document.body.classList.remove('nav-open'); });
+    // 휴대폰 펼침 메뉴: 덮개를 누르거나 ✕·Esc 로 닫는다
+    const closeNav = () => { document.body.classList.remove('nav-open'); document.querySelectorAll('.nav-dim').forEach(d => d.remove()); };
+    menu.onclick = () => {
+      if (document.body.classList.contains('nav-open')) return closeNav();
+      document.body.classList.add('nav-open');
+      const dim = document.createElement('div');
+      dim.className = 'nav-dim';
+      dim.onclick = closeNav;
+      document.body.appendChild(dim);
+    };
+    header.querySelector('#navClose').onclick = closeNav;
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.body.classList.contains('nav-open')) closeNav(); });
+    header.querySelector('nav').addEventListener('click', (e) => { if (e.target.closest('a')) closeNav(); });
     const st = header.querySelector('#sideToggle');
     if (st) st.onclick = () => {
       const mini = document.body.classList.toggle('side-mini');
