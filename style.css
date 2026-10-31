@@ -795,7 +795,13 @@ span.df-del:not(.df-pin) { color: #dc2626; font-size: .8em; cursor: help; vertic
   .topbar nav { position: fixed; z-index: 60; top: 0; bottom: 0; right: 0; width: min(300px, 86vw); background: var(--surface); padding: calc(16px + env(safe-area-inset-top)) 12px 16px;
     box-shadow: var(--shadow-lg); transform: translateX(105%); transition: transform .25s ease; overflow-y: auto; }
   body.nav-open .topbar nav { transform: none; }
-  body.nav-open::after { content: ''; position: fixed; inset: 0; background: rgba(10, 15, 25, .4); z-index: 50; }
+  /* 메뉴가 열리면 위쪽 바(메뉴 포함)를 덮개·아래 탭바보다 위로 올린다 (안 그러면 덮개가 메뉴를 가림) */
+  body.nav-open { overflow: hidden; }
+  body.nav-open .topbar { z-index: 70; }
+  .nav-dim { position: fixed; inset: 0; background: rgba(10, 15, 25, .45); z-index: 65; animation: fadeIn .15s ease; }
+  .topbar nav { padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+  .nav-close { position: sticky; top: 0; align-self: flex-end; border: 0; background: var(--surface-2) !important; width: 36px !important; height: 36px;
+    border-radius: 50% !important; justify-content: center !important; padding: 0 !important; font-size: 18px; margin-bottom: 4px; z-index: 1; }
   .topbar nav a.on::before { left: 0; }
   body.has-nav { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
   .tabbar { position: fixed; z-index: 45; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(5, 1fr);
@@ -1063,3 +1069,4 @@ table { font-size: calc(14px * var(--fs)); }
 .login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
 .login-logo { width: 52px; height: 52px; border-radius: 13px; box-shadow: 0 4px 12px rgba(15, 33, 69, .25); }
 .login-brand .page-title { margin: 0; }
+@media (min-width: 1024px) { .nav-close { display: none !important; } }
