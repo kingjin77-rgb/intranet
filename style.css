@@ -1120,3 +1120,9 @@ table { font-size: calc(14px * var(--fs)); }
 @keyframes ring { 0%, 60%, 100% { transform: rotate(0); } 10%, 30% { transform: rotate(16deg); } 20%, 40% { transform: rotate(-16deg); } }
 @media (prefers-reduced-motion: reduce) { .alert-ring { animation: none; } }
 .push-off { border-color: #f08c00; }
+
+/* v6.4.1 저장 안 된 첨삭: 점선으로 남기고 아래 띠에서 다시 저장 */
+.pv-a.unsaved { stroke-dasharray: 6 4; opacity: .55; }
+.pv-pin.unsaved, .pv-fix.unsaved, .pv-stamp.unsaved { opacity: .55; outline: 2px dashed #e03131; outline-offset: 2px; }
+.pv-unsaved-bar { position: sticky; bottom: 8px; z-index: 30; margin: 8px auto 0; width: fit-content; max-width: calc(100% - 16px); display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px; border-radius: 12px; background: #fff4e6; color: #8a3b00; border: 1px solid #ffc078; font-weight: 600; box-shadow: var(--shadow); }
