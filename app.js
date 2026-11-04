@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '6.4.0';
+  const APP_VERSION = '6.4.1';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -72,6 +72,9 @@
     if (m.includes('rate limit')) return '요청이 너무 많습니다. 잠시 후 다시 시도하세요.';
     if (/Failed to fetch|NetworkError|Load failed|NotReadable|could not be read/i.test(m) || (e && e.name === 'NotReadableError'))
       return '파일을 보내지 못했습니다. 인터넷 연결을 확인하고, 파일을 고른 뒤 워드·엑셀에서 다시 저장했다면 파일을 다시 선택해 주세요.';
+    // DB 업데이트(SQL)가 일부 빠져서 저장 중 트리거가 없는 함수를 부른 경우
+    const fn = m.match(/function (?:public\.)?(\w+)\(.*\) does not exist/);
+    if (fn) return `DB 업데이트 일부가 빠져 있어 저장하지 못했습니다. 관리자에게 알려 주세요 (빠진 함수: ${fn[1]}).`;
     // 이미 설치된 DB 함수의 오류 문구도 화면 용어(컨펌)로 맞춘다
     return m.replace(/결재/g, '컨펌');
   }

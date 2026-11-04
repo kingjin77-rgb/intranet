@@ -459,15 +459,43 @@
     const tmp = { ...row, id: 'tmp' + Math.random().toString(36).slice(2), user_id: ctx.me.id, created_at: new Date().toISOString() };
     anns.push(tmp); drawAll();
     const { data, error } = await sb.from('doc_annotations').insert(row).select().single();
+    if (error) {
+      // 그린 것은 지우지 않고 '저장 안 됨'으로 남겨 두었다가 [다시 저장]
+      tmp._failed = true; tmp._row = row;
+      drawAll(); paintUnsaved();
+      return toast(errMsg(error), true);
+    }
     anns = anns.filter(x => x !== tmp);
-    if (error) { drawAll(); return toast(errMsg(error), true); }
     if (!anns.some(x => x.id === data.id)) anns.push(data);
     mineThisSession.push(data.id);
     drawAll();
   }
 
+  // 저장 안 된 첨삭: 화면 아래 띠에서 다시 저장하거나 버린다
+  function paintUnsaved() {
+    const failed = anns.filter(x => x._failed);
+    let bar = card && card.querySelector('.pv-unsaved-bar');
+    if (!failed.length) { if (bar) bar.remove(); return; }
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.className = 'pv-unsaved-bar';
+      card.appendChild(bar);
+      bar.addEventListener('click', async (e) => {
+        if (e.target.closest('[data-drop]')) { anns = anns.filter(x => !x._failed); drawAll(); return paintUnsaved(); }
+        if (!e.target.closest('[data-retry]')) return;
+        const list = anns.filter(x => x._failed);
+        anns = anns.filter(x => !x._failed);
+        for (const x of list) await save(x._row);
+        if (!anns.some(x => x._failed)) toast('첨삭을 저장했습니다.');
+        paintUnsaved();
+      });
+    }
+    bar.innerHTML = `⚠️ 저장 안 된 첨삭 ${failed.length}개 <button type="button" class="btn sm" data-retry>다시 저장</button><button type="button" class="btn ghost sm" data-drop>버리기</button>`;
+  }
+
   async function remove(id) {
     const a = anns.find(x => x.id === id);
+    if (a && a._failed) { anns = anns.filter(x => x !== a); drawAll(); return paintUnsaved(); }
     if (!a || !(a.user_id === ctx.me.id || ctx.me.role === 'admin')) return;
     anns = anns.filter(x => x.id !== id); drawAll();
     const { error } = await sb.from('doc_annotations').delete().eq('id', id);
@@ -499,7 +527,7 @@
       const mine = list.filter(a => a.page === p.num);
       svg.innerHTML = mine.filter(a => ['pen', 'highlight', 'underline', 'fix'].includes(a.kind)).map(a => {
         const tip = `<title>${esc(who(a.user_id))} · ${esc(fmtDate(a.created_at))}${a._prev ? ' (이전 버전)' : ''}</title>`;
-        const cls = `pv-a ${a.kind}${a._prev ? ' prev' : ''}${a.checked_at ? ' checked' : ''}`;
+        const cls = `pv-a ${a.kind}${a._prev ? ' prev' : ''}${a.checked_at ? ' checked' : ''}${a._failed ? ' unsaved' : ''}`;
         const st = `style="--c:${esc(a.color || '#e11d48')}" data-ann="${a._prev ? '' : esc(a.id)}"`;
         const d = a.data || {};
         if (a.kind === 'pen') return `<polyline class="${cls}" ${st} points="${(d.pts || []).map(q => q.join(',')).join(' ')}">${tip}</polyline>`;
@@ -515,11 +543,11 @@
         const d = a.data || {}, pos = `left:${+d.x * 100}%;top:${+d.y * 100}%;--c:${esc(a.color || '#2563eb')}`;
         const id = a._prev ? '' : esc(a.id);
         const nrep = (replies[a.id] || []).length;
-        if (a.kind === 'fix') return `<button type="button" class="pv-fix${a._prev ? ' prev' : ''}${a.checked_at ? ' checked' : ''}${+d.x > 0.55 ? ' flip' : ''}" style="left:${+d.x * 100}%;top:${+d.y * 100}%" data-ann="${id}" data-open="${id}"
+        if (a.kind === 'fix') return `<button type="button" class="pv-fix${a._prev ? ' prev' : ''}${a._failed ? ' unsaved' : ''}${a.checked_at ? ' checked' : ''}${+d.x > 0.55 ? ' flip' : ''}" style="left:${+d.x * 100}%;top:${+d.y * 100}%" data-ann="${id}" data-open="${id}"
           title="${esc(who(a.user_id))}: ${esc(d.orig ? d.orig + ' → ' : '')}${esc(a.body || '')}">${ctx.avatar(a.user_id, 18)}<span>${a.checked_at ? '☑ ' : ''}${esc(a.body || '')}</span>${nrep ? `<i>💬${nrep}</i>` : ''}</button>`;
-        if (a.kind === 'stamp') return `<div class="pv-stamp${a._prev ? ' prev' : ''}" style="${pos}" data-ann="${id}" data-open="${id}" title="${esc(who(a.user_id))} · ${esc(fmtDate(a.created_at))}">
+        if (a.kind === 'stamp') return `<div class="pv-stamp${a._prev ? ' prev' : ''}${a._failed ? ' unsaved' : ''}" style="${pos}" data-ann="${id}" data-open="${id}" title="${esc(who(a.user_id))} · ${esc(fmtDate(a.created_at))}">
           <b>${esc(STAMPS[a.body] || a.body || '')}</b><small>${esc(who(a.user_id))} ${esc(fmtDate(a.created_at).split(' ')[0])}</small></div>`;
-        return `<button type="button" class="pv-pin${a._prev ? ' prev' : ''}${a.checked_at ? ' checked' : ''}${+d.x > 0.6 ? ' flip' : ''}" style="${pos}" data-ann="${id}" data-open="${id}" title="${esc(who(a.user_id))}: ${esc(a.body || '')}">
+        return `<button type="button" class="pv-pin${a._prev ? ' prev' : ''}${a._failed ? ' unsaved' : ''}${a.checked_at ? ' checked' : ''}${+d.x > 0.6 ? ' flip' : ''}" style="${pos}" data-ann="${id}" data-open="${id}" title="${esc(who(a.user_id))}: ${esc(a.body || '')}">
           ${ctx.avatar(a.user_id, 20)}<span>${esc((a.body || '').slice(0, 14))}${(a.body || '').length > 14 ? '…' : ''}</span>${nrep ? `<i>💬${nrep}</i>` : ''}</button>`;
       }).join('');
       keep.forEach(el => pins.appendChild(el));
