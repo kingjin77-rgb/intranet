@@ -1126,3 +1126,14 @@ table { font-size: calc(14px * var(--fs)); }
 .pv-pin.unsaved, .pv-fix.unsaved, .pv-stamp.unsaved { opacity: .55; outline: 2px dashed #e03131; outline-offset: 2px; }
 .pv-unsaved-bar { position: sticky; bottom: 8px; z-index: 30; margin: 8px auto 0; width: fit-content; max-width: calc(100% - 16px); display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 8px 12px; border-radius: 12px; background: #fff4e6; color: #8a3b00; border: 1px solid #ffc078; font-weight: 600; box-shadow: var(--shadow); }
+
+/* v6.5 웹 PT(HTML) 미리보기 · 발표 화면 */
+.html-pt { display: block; width: 100%; aspect-ratio: 16 / 9; max-height: 80vh; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+#viewerCard.pv-full .html-pt { max-height: none; height: 100%; aspect-ratio: auto; border: 0; border-radius: 0; }
+.html-pt-tip { margin-top: 8px; font-size: calc(13px * var(--fs)); }
+body.present { margin: 0; background: #000; overflow: hidden; }
+body.present .html-pt { position: fixed; inset: 0; width: 100vw; height: 100vh; max-height: none; aspect-ratio: auto; border: 0; border-radius: 0; }
+.present-bar { position: fixed; top: 10px; right: 10px; z-index: 10; display: flex; gap: 6px; transition: opacity .3s; }
+.present-bar button { border: 0; border-radius: 8px; padding: 8px 12px; background: rgba(20, 24, 33, .72); color: #fff; font-size: 14px; cursor: pointer; }
+.present-bar.idle { opacity: 0; }
+.present-msg { color: #fff; font-family: sans-serif; padding: 40px; text-align: center; }

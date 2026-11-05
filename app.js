@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '6.4.1';
+  const APP_VERSION = '6.5.0';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -92,7 +92,8 @@
 
   // 순간적인 네트워크 끊김이면 한 번 더 시도
   async function uploadFile(path, f) {
-    const opts = { contentType: f.type || 'application/octet-stream' };
+    // 웹 PT(HTML)는 저장소에서 바로 실행되지 않게 글자 파일로 보관한다 (보기는 격리 상자에서만)
+    const opts = { contentType: isHtml(f) ? 'text/plain' : (f.type || 'application/octet-stream') };
     let r = await sb.storage.from('docs').upload(path, f, opts);
     if (r.error && /Failed to fetch|NetworkError|Load failed/i.test(r.error.message || '')) {
       await new Promise(res => setTimeout(res, 1500));
@@ -777,7 +778,7 @@
   }
 
   // 로그인 + 활성 직원인지 확인. 실패하면 로그인 화면으로 보낸다.
-  async function requireAuth() {
+  async function requireAuth(opt = {}) {
     if (!sb) {
       renderHeader(null);
       showFatal('<h2>⚙️ 설정 필요</h2><p class="muted">config.js 에 Supabase URL과 anon key를 입력하세요. 자세한 방법은 README.md 를 참고하세요.</p>');
@@ -796,6 +797,7 @@
       document.getElementById('outBtn').onclick = async () => { await sb.auth.signOut(); location.href = 'login.html'; };
       throw new Error('inactive');
     }
+    if (opt.bare) { remember([profile]); return profile; }   // 발표 화면처럼 메뉴 없이 쓰는 페이지
     renderHeader(profile);
     startWatch(profile);
     watchInbox(profile);
@@ -993,7 +995,36 @@
     if (n.match(/\.docx?$/) || n.endsWith('.hwp')) return '📘';
     if ((type || '').startsWith('image/')) return '🖼️';
     if ((type || '').startsWith('video/') || n.match(/\.(mp4|m4v|mov|webm)$/)) return '🎬';
+    if (n.match(/\.html?$/)) return '🌐';
     return '📄';
+  }
+
+  // ----- 웹 PT(HTML): 격리 상자(sandbox iframe)에서만 실행 -----
+  //   allow-same-origin 이 없어서 안의 스크립트는 인트라넷 로그인 정보·화면에 접근할 수 없다
+  const isHtml = (f) => /\.html?$/i.test((f && f.name) || '');
+  async function loadHtmlText(url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('파일을 불러오지 못했습니다 (' + res.status + ')');
+    const buf = await res.arrayBuffer();
+    // 기본 UTF-8, 파일에 <meta charset=euc-kr> 등이 있으면 그 인코딩으로 다시 읽는다
+    const head = new TextDecoder('latin1').decode(buf.slice(0, 4096));
+    const cs = (head.match(/<meta[^>]+charset\s*=\s*["']?\s*([\w-]+)/i) || [])[1];
+    if (cs && !/^utf-?8$/i.test(cs)) { try { return new TextDecoder(cs).decode(buf); } catch {} }
+    return new TextDecoder('utf-8').decode(buf);
+  }
+  function htmlFrame(text, title) {
+    const fr = document.createElement('iframe');
+    fr.className = 'html-pt';
+    fr.setAttribute('sandbox', 'allow-scripts allow-popups allow-forms allow-modals allow-popups-to-escape-sandbox');
+    fr.setAttribute('allow', 'fullscreen; autoplay');
+    fr.setAttribute('referrerpolicy', 'no-referrer');
+    fr.title = title || '웹 PT';
+    // 격리 상자 안에서는 저장소를 못 쓰니, 웹 PT가 진도 저장 등에 쓰는 localStorage 를 메모리 대용품으로 바꿔 준다
+    const shim = '<script>(function(){function M(){var d={};return{getItem:function(k){return k in d?d[k]:null},setItem:function(k,v){d[k]=String(v)},removeItem:function(k){delete d[k]},clear:function(){d={}},key:function(i){return Object.keys(d)[i]||null},get length(){return Object.keys(d).length}}}'
+      + "['localStorage','sessionStorage'].forEach(function(n){try{window[n].length}catch(e){try{Object.defineProperty(window,n,{value:M(),configurable:true})}catch(_){}}})})();<\/script>";
+    fr.srcdoc = /<head[^>]*>/i.test(text) ? text.replace(/<head[^>]*>/i, (m) => m + shim)
+      : /<!doctype[^>]*>/i.test(text) ? text.replace(/<!doctype[^>]*>/i, (m) => m + shim) : shim + text;
+    return fr;
   }
 
   // ----- 홈 화면 앱 (PWA) -----
@@ -1057,5 +1088,5 @@
     (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
   }
 
-  window.App = { openInbox: () => myProfile && openInbox(myProfile), alertState, hasV64, openProfile: () => myProfile && openProfileDialog(myProfile), honor, avatar, avColor, people, remember, signAvatars, sendMail, setTheme, hasV6, V6_NOTICE_TEXT, saveFile, dueBadge, hasV5, V5_NOTICE, logActivity, attachMention, hasV4, V4_NOTICE, refreshChatBadge: () => refreshChat(), snapshotFile, uploadFile, sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, hasV3, V3_NOTICE, TASK_STATUS, CONSULT_STATUS, ymdLocal, ddayDate, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
+  window.App = { isHtml, loadHtmlText, htmlFrame, openInbox: () => myProfile && openInbox(myProfile), alertState, hasV64, openProfile: () => myProfile && openProfileDialog(myProfile), honor, avatar, avColor, people, remember, signAvatars, sendMail, setTheme, hasV6, V6_NOTICE_TEXT, saveFile, dueBadge, hasV5, V5_NOTICE, logActivity, attachMention, hasV4, V4_NOTICE, refreshChatBadge: () => refreshChat(), snapshotFile, uploadFile, sb, cfg, configured, esc, fmtDate, fmtSize, statusBadge, toast, errMsg, copyText, pageUrl, requireAuth, loadMembers, loadScript, fileIcon, setBadge, hasV2, V2_NOTICE, hasV3, V3_NOTICE, TASK_STATUS, CONSULT_STATUS, ymdLocal, ddayDate, loadCases, EVENT_KIND, fmtWon, dday, openPasswordDialog, STATUS_LABEL };
 })();
