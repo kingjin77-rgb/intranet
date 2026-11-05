@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>웹 PT 발표</title>
+<meta name="theme-color" content="#000000">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="stylesheet" href="style.css?v=6.5.0">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
+<script src="config.js?v=6.5.0"></script>
+<script src="app.js?v=6.5.0"></script>
+</head>
+<body class="present">
+<div class="present-bar" id="bar">
+  <button type="button" id="fsBtn">⛶ 전체화면</button>
+  <button type="button" id="closeBtn">✕ 닫기</button>
+</div>
+<script>
+// 웹 PT 발표 화면: 문서의 HTML 파일을 창 전체에 격리 상자로 띄운다
+(async () => {
+  const { sb, esc } = App;
+  const q = new URLSearchParams(location.search);
+  const docId = q.get('id'), path = q.get('f');
+  const fail = (msg) => { document.body.insertAdjacentHTML('beforeend', `<p class="present-msg">${esc(msg)}</p>`); };
+  document.getElementById('closeBtn').onclick = () => { window.close(); setTimeout(() => { location.href = App.pageUrl('doc.html', { id: docId }); }, 150); };
+  document.getElementById('fsBtn').onclick = () => {
+    if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {});
+  };
+  // 마우스를 3초 안 움직이면 위쪽 버튼을 숨긴다
+  const bar = document.getElementById('bar');
+  let t;
+  const wake = () => { bar.classList.remove('idle'); clearTimeout(t); t = setTimeout(() => bar.classList.add('idle'), 3000); };
+  ['mousemove', 'touchstart', 'keydown'].forEach(ev => document.addEventListener(ev, wake, { passive: true }));
+  wake();
+
+  await App.requireAuth({ bare: true });
+  if (!docId || !path) return fail('잘못된 주소입니다.');
+  // 이 문서에 실제로 붙은 파일만 연다
+  const { data: doc, error } = await sb.from('documents').select('id,title,file_path,file_name,extra_files').eq('id', docId).maybeSingle();
+  if (error || !doc) return fail('문서를 찾을 수 없습니다.');
+  const files = [{ path: doc.file_path, name: doc.file_name }, ...(doc.extra_files || [])];
+  const f = files.find(x => x && x.path === path);
+  if (!f || !App.isHtml(f)) return fail('이 문서의 웹 PT 파일이 아닙니다.');
+  document.title = `${doc.title} · 웹 PT`;
+  const { data: s } = await sb.storage.from('docs').createSignedUrl(f.path, 3600);
+  if (!s || !s.signedUrl) return fail('파일 주소를 만들지 못했습니다.');
+  try {
+    const fr = App.htmlFrame(await App.loadHtmlText(s.signedUrl), doc.title);
+    document.body.appendChild(fr);
+    fr.addEventListener('load', () => fr.focus());
+  } catch (e) { fail(e.message); }
+})();
+</script>
+</body>
+</html>

@@ -14,13 +14,13 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="인트라넷">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=6.4.1">
+<link rel="stylesheet" href="style.css?v=6.5.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
-<script src="config.js?v=6.4.1"></script>
-<script src="app.js?v=6.4.1"></script>
-<script src="video.js?v=6.4.1"></script>
-<script src="viewer.js?v=6.4.1"></script>
-<script src="diff.js?v=6.4.1"></script>
+<script src="config.js?v=6.5.0"></script>
+<script src="app.js?v=6.5.0"></script>
+<script src="video.js?v=6.5.0"></script>
+<script src="viewer.js?v=6.5.0"></script>
+<script src="diff.js?v=6.5.0"></script>
 </head>
 <body>
 <main class="container">
@@ -235,6 +235,7 @@
     ]);
     const viewUrl = view.data && view.data.signedUrl;
     openBtn.href = viewUrl || '#';
+    openBtn.textContent = '새 창에서 열기';
     document.getElementById('downloadBtn').href = (dl.data && dl.data.signedUrl) || '#';
     document.getElementById('downloadBtn').onclick = () => App.logActivity('download', 'documents', doc.id, f.name);
 
@@ -262,6 +263,22 @@
     } else if (viewUrl && App.isVideo(f)) {
       openBtn.hidden = true;
       Viewer.video(viewUrl, f.name, f.path, () => noPreview('이 브라우저에서 재생할 수 없는 영상 형식입니다.'));
+    } else if (viewUrl && App.isHtml(f)) {
+      // 웹 PT: 격리 상자에서 실행하고, 발표는 크롬 새 창(present.html)으로
+      openBtn.href = App.pageUrl('present.html', { id: doc.id, f: f.path });
+      openBtn.textContent = '🌐 크롬 새 창에서 열기 (발표)';
+      Viewer.plain(f.path);
+      viewer.innerHTML = '<p class="muted">웹 PT 불러오는 중…</p>';
+      try {
+        const text = await App.loadHtmlText(viewUrl);
+        viewer.innerHTML = '';
+        viewer.appendChild(App.htmlFrame(text, f.name));
+        viewer.insertAdjacentHTML('beforeend', `<p class="muted html-pt-tip">💡 슬라이드는 화면을 한 번 누른 뒤 ←/→ 키로 넘깁니다. 발표할 때는 위의 <b>🌐 크롬 새 창에서 열기</b>나 ⛶ 전체화면을 누르세요.
+          같은 폴더의 사진 파일은 함께 올라가지 않으니, 사진은 HTML 안에 넣거나 인터넷 주소로 넣어 주세요.</p>`);
+      } catch (e) {
+        console.warn(e);
+        noPreview('웹 PT를 불러오지 못했습니다.');
+      }
     } else if (viewUrl && /\.(docx|xlsx)$/.test(lower)) {
       // 워드·엑셀은 이 브라우저 안에서 직접 그린다 (파일이 외부 서버로 나가지 않음)
       openBtn.hidden = true;
