@@ -235,12 +235,12 @@ supabase/   schema.sql (DB 테이블·보안 정책·컨펌 로직)
 **적용**: Supabase SQL Editor에서 `supabase/migrations/003_v3.sql` 을 붙여넣고 Run (002 다음). 실행 전에는 새 메뉴에 안내 문구만 나옵니다.
 
 **휴대폰 푸시 (선택, 10분)** — 앱을 꺼 둬도 컨펌 차례·업무 지시·공지(004 실행 시 새 문서·코멘트·열람·컨펌 결과도)가 휴대폰에 옵니다.
-1. Supabase → **Edge Functions → Deploy a new function → Via Editor** → 이름 `send-push` → `supabase/functions/send-push/index.ts` 내용 붙여넣기 → Deploy
+1. Supabase → **Edge Functions → Deploy a new function → Via Editor** → `supabase/functions/send-push/index.ts` 내용 붙여넣기 → Deploy (지금 운영 이름: `swift-handler`)
 2. 함수 설정에서 **Enforce JWT verification 끄기**
-3. **Edge Functions → Secrets** 에 `PUSH_SECRET`(아무 긴 문자열), `VAPID_PUBLIC_KEY`(config.js 의 값), `VAPID_PRIVATE_KEY`(관리자에게 따로 전달된 값), `VAPID_SUBJECT`(`mailto:관리자이메일`) 등록
-4. SQL Editor에서 한 줄 실행:
-   `insert into public.push_config (url, secret) values ('https://<프로젝트ID>.supabase.co/functions/v1/send-push', '<PUSH_SECRET 과 같은 값>') on conflict (id) do update set url = excluded.url, secret = excluded.secret;`
-5. 각 직원은 인트라넷에서 **🔔 알림 켜기** (아이폰은 홈 화면 앱에서)
+3. SQL Editor에서 `supabase/migrations/013_push_fix.sql` 실행 — 알림 키는 함수가 처음 실행될 때 스스로 만들어 DB(`push_keys`)에 보관하므로 **Secrets 를 넣을 필요가 없습니다** (v6.6)
+4. SQL Editor에서 한 줄 실행 (비밀값은 아무 긴 문자열):
+   `insert into public.push_config (url, secret) values ('https://<프로젝트ID>.supabase.co/functions/v1/<함수이름>', '<아무 긴 문자열>') on conflict (id) do update set url = excluded.url, secret = excluded.secret;`
+5. 각 직원은 인트라넷에서 **🔔 알림 켜기** (아이폰은 홈 화면 앱에서) → 🔔 알림함의 **[시험 보내기]** 로 몇 대에 갔는지 확인
 
 ## v2 업데이트 (사건·일정·수정본·양식) 적용 방법
 
