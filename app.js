@@ -6,7 +6,7 @@
   const sb = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
   // 배포할 때마다 version.json 과 함께 올린다. 다르면 "새 버전" 안내를 띄운다.
-  const APP_VERSION = '6.5.0';
+  const APP_VERSION = '6.6.0';
 
   const STATUS_LABEL = { pending: '컨펌중', approved: '컨펌완료', rejected: '반려', none: '공유' };
 
@@ -310,10 +310,29 @@
     refreshBellDot();
     return true;
   }
+  // 시험 보내기: 나에게 보내고, 발송 함수의 결과(몇 대로 갔는지)까지 확인해서 보여준다
   async function testAlert() {
-    const { data, error } = await sb.rpc('send_test_push');
+    if (myProfile) await subscribePush(myProfile).catch(() => {});
+    let { data, error } = await sb.rpc('push_test');
+    if (error && /push_test/.test(error.message || '')) {   // 013 실행 전
+      ({ data, error } = await sb.rpc('send_test_push'));
+      if (error) return toast(errMsg(error), true);
+      return toast(data ? '시험 알림을 보냈습니다. 몇 초 안에 이 기기에 알림이 오면 정상입니다.' : '이 기기가 아직 등록되지 않았습니다. [알림 켜기]를 먼저 눌러 주세요.', !data);
+    }
     if (error) return toast(errMsg(error), true);
-    toast(data ? '시험 알림을 보냈습니다. 몇 초 안에 이 기기에 알림이 오면 정상입니다.' : '이 기기가 아직 등록되지 않았습니다. [알림 켜기]를 먼저 눌러 주세요.', !data);
+    if (!data.devices) return toast('이 휴대폰·PC가 아직 알림 등록이 안 됐습니다. [알림 켜기]를 먼저 눌러 주세요.', true);
+    if (!data.request) return toast('알림 발송 설정(push_config)이 없습니다. 관리자에게 알려 주세요.', true);
+    toast('시험 알림을 보내는 중…');
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      const { data: r } = await sb.rpc('push_test_result', { p_id: data.request });
+      if (!r) continue;
+      const res = r.result || {};
+      if (r.status === 200 && res.sent > 0) return toast(`✅ 등록된 기기 ${res.sent}대로 보냈습니다. 휴대폰 위에 알림이 떴는지 확인하세요.`);
+      if (r.status === 200 && res.removed > 0) return toast('예전 방식으로 등록된 기기를 정리했습니다. 앱을 완전히 껐다 켠 뒤 다시 [시험 보내기]를 눌러 주세요.', true);
+      return toast(`❌ 휴대폰 알림 발송 실패 (${r.status || r.error || '응답 없음'}). 관리자에게 알려 주세요.`, true);
+    }
+    toast('발송 결과를 아직 받지 못했습니다. 잠시 뒤 휴대폰을 확인해 주세요.', true);
   }
 
   // 로그인할 때: 알림이 꺼져 있으면 크게 안내 ('나중에'는 하루 동안 안 물어봄)
@@ -549,12 +568,35 @@
     const s = atob((b64 + '='.repeat((4 - b64.length % 4) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
     return Uint8Array.from(s, c => c.charCodeAt(0));
   }
+  // 알림 공개키: DB(push_keys, 013)에 있으면 그것, 없으면 config.js 값
+  let _pushKey;
+  async function pushKey() {
+    if (_pushKey === undefined) {
+      const { data, error } = await sb.rpc('push_public_key');
+      _pushKey = (!error && data) || cfg.VAPID_PUBLIC_KEY || '';
+    }
+    return _pushKey;
+  }
+  function sameKey(sub, key) {
+    const a = sub && sub.options && sub.options.applicationServerKey;
+    if (!a) return true;   // 알 수 없으면 그대로 둔다
+    const x = new Uint8Array(a), y = b64ToBytes(key);
+    return x.length === y.length && x.every((v, i) => v === y[i]);
+  }
   async function subscribePush(me) {
-    if (!cfg.VAPID_PUBLIC_KEY || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
     if (Notification.permission !== 'granted' || !(await hasV3())) return;
+    const key = await pushKey();
+    if (!key) return;
     const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription()
-      || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(cfg.VAPID_PUBLIC_KEY) });
+    let sub = await reg.pushManager.getSubscription();
+    // 예전 키로 등록된 기기: 지우고 새 키로 다시 등록 (권한은 이미 있으니 묻지 않음)
+    if (sub && !sameKey(sub, key)) {
+      await sb.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+      await sub.unsubscribe().catch(() => {});
+      sub = null;
+    }
+    sub = sub || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
     const j = sub.toJSON();
     await sb.from('push_subscriptions').upsert({ endpoint: j.endpoint, user_id: me.id, p256dh: j.keys.p256dh, auth: j.keys.auth });
   }
